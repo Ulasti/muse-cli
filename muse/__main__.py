@@ -33,15 +33,28 @@ def _handle_uninstall():
 
     print(f"\n{WHITE}🗑️  muse-cli uninstaller{RESET}\n")
 
-    # ── Load config for provenance + music dir ────────────────────────────────
+    # ── Load config FIRST before anything is deleted ──────────────────────────
     try:
         config = get_config()
     except Exception:
         config = {}
 
-    music_dir             = config.get("output_base", "")
+    music_dir               = config.get("output_base", "")
     script_installed_ffmpeg = config.get("script_installed_ffmpeg", False)
     script_installed_ytdlp  = config.get("script_installed_ytdlp",  False)
+
+    # ── Find pipx path now, before config/env might be affected ──────────────
+    pipx_path = shutil.which("pipx") or ""
+    if not pipx_path:
+        # Common install locations
+        for candidate in [
+            os.path.expanduser("~/.local/bin/pipx"),
+            "/usr/local/bin/pipx",
+            "/opt/homebrew/bin/pipx",
+        ]:
+            if os.path.exists(candidate):
+                pipx_path = candidate
+                break
 
     # ── Music library ─────────────────────────────────────────────────────────
     if music_dir and os.path.exists(music_dir):
@@ -66,13 +79,13 @@ def _handle_uninstall():
                 print(f"{RED}   ❌ Could not remove config: {e}{RESET}")
 
     # ── yt-dlp ────────────────────────────────────────────────────────────────
-    ytdlp_path = shutil.which("yt-dlp")
-    if ytdlp_path:
+    ytdlp_path = shutil.which("yt-dlp") or "/usr/local/bin/yt-dlp"
+    if os.path.exists(ytdlp_path):
         if script_installed_ytdlp:
             choice = input(f"{YELLOW}   Remove yt-dlp (installed by muse-cli)? (y/N): {RESET}").strip().lower()
             if choice == 'y':
                 try:
-                    os.remove(ytdlp_path)
+                    subprocess.run(["sudo", "rm", ytdlp_path], check=True)
                     print(f"{GREEN}   ✅ yt-dlp removed{RESET}")
                 except Exception as e:
                     print(f"{RED}   ❌ Could not remove yt-dlp: {e}{RESET}")
@@ -99,10 +112,7 @@ def _handle_uninstall():
                             print(f"{YELLOW}   ffmpeg not managed by Homebrew.{RESET}")
                             print(f"{YELLOW}   Remove manually: sudo rm {ffmpeg_path}{RESET}")
                     else:
-                        subprocess.run(
-                            ["sudo", "apt-get", "remove", "-y", "ffmpeg"],
-                            check=True
-                        )
+                        subprocess.run(["sudo", "apt-get", "remove", "-y", "ffmpeg"], check=True)
                         print(f"{GREEN}   ✅ ffmpeg removed{RESET}")
                 except Exception as e:
                     print(f"{RED}   ❌ Could not remove ffmpeg: {e}{RESET}")
@@ -111,12 +121,16 @@ def _handle_uninstall():
 
     # ── muse-cli itself ───────────────────────────────────────────────────────
     print(f"\n{CYAN}   Removing muse-cli...{RESET}")
+    if not pipx_path:
+        print(f"{RED}   ❌ pipx not found — cannot auto-uninstall{RESET}")
+        print(f"{YELLOW}   Try manually: pipx uninstall muse-cli{RESET}\n")
+        return
     try:
-        subprocess.run(["pipx", "uninstall", "muse-cli"], check=True)
+        subprocess.run([pipx_path, "uninstall", "muse-cli"], check=True)
         print(f"{GREEN}✅ Done. Goodbye!{RESET}\n")
     except Exception as e:
         print(f"{RED}❌ {e}{RESET}")
-        print(f"{YELLOW}   Try manually: pipx uninstall muse-cli{RESET}\n")
+        print(f"{YELLOW}   Try manually: {pipx_path} uninstall muse-cli{RESET}\n")
 
 
 

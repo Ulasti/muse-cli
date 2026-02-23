@@ -22,13 +22,11 @@ echo -e "${GREEN}  ╚═╝     ╚═╝ ╚═════╝ ╚════
 echo -e "${DIM}  muse-cli installer — github.com/Ulasti/muse-cli${RESET}"
 echo ""
 
-# ── Detect OS and architecture ───────────────────────────────────────────────
 OS="$(uname -s)"
 ARCH="$(uname -m)"
 
 has() { command -v "$1" &>/dev/null; }
 
-# Track what this script installs so uninstall knows what to offer to remove
 INSTALLED_FFMPEG=false
 INSTALLED_YTDLP=false
 
@@ -110,36 +108,37 @@ fi
 # ── 5. Write install provenance to config ────────────────────────────────────
 mkdir -p "$CONFIG_DIR"
 
-# Merge into existing config if present, otherwise create minimal provenance file
+# Convert bash booleans to Python booleans explicitly
+PY_FFMPEG="False"
+PY_YTDLP="False"
+[[ "$INSTALLED_FFMPEG" == "true" ]] && PY_FFMPEG="True"
+[[ "$INSTALLED_YTDLP"  == "true" ]] && PY_YTDLP="True"
+
 if [[ -f "$CONFIG_FILE" ]]; then
-    # Use python to safely merge — it will already be installed via pipx deps
     python3 - <<PYEOF
 import json, os
-path = os.path.expanduser("$CONFIG_FILE")
+path = "$CONFIG_FILE"
 with open(path) as f:
     cfg = json.load(f)
-cfg["script_installed_ffmpeg"] = $INSTALLED_FFMPEG
-cfg["script_installed_ytdlp"]  = $INSTALLED_YTDLP
+cfg["script_installed_ffmpeg"] = $PY_FFMPEG
+cfg["script_installed_ytdlp"]  = $PY_YTDLP
 with open(path, "w") as f:
     json.dump(cfg, f, indent=2)
 PYEOF
 else
-    # Config doesn't exist yet (first launch will create the full one)
-    # Write a provenance-only seed file that first_launch_setup will merge
     python3 - <<PYEOF
 import json, os
-path = os.path.expanduser("$CONFIG_FILE")
+path = "$CONFIG_FILE"
 os.makedirs(os.path.dirname(path), exist_ok=True)
 seed = {
-    "script_installed_ffmpeg": $INSTALLED_FFMPEG,
-    "script_installed_ytdlp":  $INSTALLED_YTDLP,
+    "script_installed_ffmpeg": $PY_FFMPEG,
+    "script_installed_ytdlp":  $PY_YTDLP,
 }
 with open(path, "w") as f:
     json.dump(seed, f, indent=2)
 PYEOF
 fi
 
-# ── Done ─────────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${GREEN}  All done! Run: muse-cli${RESET}"
 echo -e "${DIM}  If 'muse-cli' is not found, restart your terminal or run: pipx ensurepath${RESET}"
