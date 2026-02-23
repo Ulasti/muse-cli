@@ -6,7 +6,7 @@ DIM   = "\033[2m"
 RESET = "\033[0m"
 
 _PREFERRED_TYPES = ["Album", "Single", "EP"]
-_REJECTED_TYPES  = ["Spokenword", "Broadcast", "DJ Mix", "Compilation", "Interview"]
+_REJECTED_TYPES  = ["Spokenword", "Broadcast", "DJ Mix", "Compilation", "Interview", "Live", "Remix",]
 
 
 def _normalize(text: str) -> str:
