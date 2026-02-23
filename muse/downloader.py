@@ -61,7 +61,8 @@ def _clean_channel_name(name: str) -> str:
     return name.strip()
 
 
-def extract_video_info(url: str) -> tuple[str, str, str]:
+def extract_video_info(url: str) -> tuple[str, str, str, bool]:
+    """Returns (artist, title, video_id, is_cover)."""
     info_cmd = [
         "yt-dlp", "--no-playlist", "--quiet",
         "--print", "%(artist)s\n%(title)s\n%(uploader)s\n%(channel)s\n%(id)s",
@@ -84,16 +85,19 @@ def extract_video_info(url: str) -> tuple[str, str, str]:
 
     raw_artist, raw_title, raw_uploader, raw_channel, video_id = lines[:5]
 
+    # Check for cover on raw title BEFORE stripping noise
+    is_cover = bool(re.search(r'\bcover\b', raw_title, flags=re.IGNORECASE))
+
     if raw_artist and raw_artist.lower() not in ("na", "none", "unknown", ""):
-        return _clean_channel_name(raw_artist), _strip_noise(raw_title), video_id
+        return _clean_channel_name(raw_artist), _strip_noise(raw_title), video_id, is_cover
 
     split = _split_title(raw_title)
     if split:
-        return split[0], split[1], video_id
+        return split[0], split[1], video_id, is_cover
 
     channel_candidate = raw_channel or raw_uploader or ""
     artist = _clean_channel_name(channel_candidate) if channel_candidate else "Unknown Artist"
-    return artist, _strip_noise(raw_title) or raw_title, video_id
+    return artist, _strip_noise(raw_title) or raw_title, video_id, is_cover
 
 
 def download_with_progress(url: str, output_template: str, audio_format: str) -> str:
@@ -209,7 +213,7 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
 
         # ── Fetch video info ─────────────────────────────────────────────────
         print(f"{DIM}   Fetching info...{RESET}", end="\r")
-        artist, title, video_id = extract_video_info(url)
+        artist, title, video_id, is_cover = extract_video_info(url)
         print(f"   {GREEN}▶ {artist} — {title}{RESET}          ")
 
         # ── Duplicate check ──────────────────────────────────────────────────
@@ -233,7 +237,7 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         # ── MusicBrainz metadata lookup ──────────────────────────────────────
         print(f"{DIM}   Looking up metadata...{RESET}", end="\r")
         from .metadata import lookup_metadata
-        mb = lookup_metadata(artist, title)
+        mb = lookup_metadata(artist, title, is_cover=is_cover)
 
         # Use MusicBrainz data if found, fall back to YouTube data
         final_artist = mb.get('artist') or artist
@@ -246,7 +250,6 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
                   f"{(' / ' + album) if album else ''}"
                   f"{(' (' + year + ')') if year else ''}{RESET}          ")
         else:
-            # Clear the looking up line
             print(f"   {DIM}Metadata not found on MusicBrainz{RESET}          ")
 
         # ── Download ─────────────────────────────────────────────────────────

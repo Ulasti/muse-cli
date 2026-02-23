@@ -4,11 +4,8 @@ import re
 DIM   = "\033[2m"
 RESET = "\033[0m"
 
-# Release types to prefer, in order
 _PREFERRED_TYPES = ["Album", "Single", "EP"]
 _REJECTED_TYPES  = ["Spokenword", "Broadcast", "DJ Mix", "Compilation", "Interview"]
-
-
 
 
 def _normalize(text: str) -> str:
@@ -18,7 +15,6 @@ def _normalize(text: str) -> str:
 
 
 def _title_score(result_title: str, query_title: str) -> float:
-    """Return 0-1 similarity between two titles."""
     a = set(_normalize(result_title).split())
     b = set(_normalize(query_title).split())
     if not a or not b:
@@ -29,10 +25,6 @@ def _title_score(result_title: str, query_title: str) -> float:
 
 
 def _pick_best_release(releases: list) -> dict:
-    """
-    From a recording's release list pick the best one:
-    prefer Album > Single > EP, reject bad types, prefer non-reissue.
-    """
     if not releases:
         return {}
 
@@ -42,20 +34,21 @@ def _pick_best_release(releases: list) -> dict:
             return -1
         type_score = len(_PREFERRED_TYPES) - _PREFERRED_TYPES.index(rtype) \
                      if rtype in _PREFERRED_TYPES else 0
-        # Penalise reissues / remasters / compilations in the title
-        title = rel.get('title', '').lower()
-        penalty = 1 if any(w in title for w in ['reissue', 'remaster', 'compilation', 'mix', 'commentary']) else 0
+        title   = rel.get('title', '').lower()
+        penalty = 1 if any(w in title for w in
+                           ['reissue', 'remaster', 'compilation', 'mix', 'commentary']) else 0
         return type_score - penalty
 
     scored = sorted(releases, key=release_score, reverse=True)
     return scored[0] if release_score(scored[0]) >= 0 else {}
 
 
-def lookup_metadata(artist: str, title: str) -> dict:
+def lookup_metadata(artist: str, title: str, is_cover: bool = False) -> dict:
     """
-    Query MusicBrainz for artist/title and return:
-      { 'artist': str, 'title': str, 'album': str, 'year': str }
-    Returns empty dict if nothing confident found.
+    Query MusicBrainz for metadata.
+    If is_cover=True, search by title only and take the most popular result
+    so covers correctly return the original artist's album info.
+    Returns { 'artist', 'title', 'album', 'year' } or empty dict.
     """
     try:
         import musicbrainzngs
@@ -64,7 +57,7 @@ def lookup_metadata(artist: str, title: str) -> dict:
         )
 
         if is_cover:
-            # Title only, take most popular result
+            # Title only — top result by MusicBrainz score = most popular version
             result = musicbrainzngs.search_recordings(
                 recording=title, limit=1
             )
@@ -72,20 +65,19 @@ def lookup_metadata(artist: str, title: str) -> dict:
             result = musicbrainzngs.search_recordings(
                 artist=artist, recording=title, limit=5
             )
-            
+
         recordings = result.get('recording-list', [])
 
         for recording in recordings:
-            rec_title   = recording.get('title', '')
-            rec_artist  = recording.get('artist-credit-phrase', '')
+            rec_title  = recording.get('title', '')
+            rec_artist = recording.get('artist-credit-phrase', '')
             title_score = _title_score(rec_title, title)
 
-            # Require a confident title match
             if title_score < 0.6:
                 continue
 
             releases = recording.get('release-list', [])
-            best_rel  = _pick_best_release(releases)
+            best_rel = _pick_best_release(releases)
 
             if not best_rel:
                 continue
@@ -104,8 +96,8 @@ def lookup_metadata(artist: str, title: str) -> dict:
             }
 
     except ImportError:
-        pass  # musicbrainzngs not installed — silently skip
+        pass
     except Exception:
-        pass  # network error or API issue — silently skip
+        pass
 
     return {}
