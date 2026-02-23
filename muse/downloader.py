@@ -2,6 +2,7 @@ import os
 import subprocess
 import re
 from mutagen.easyid3 import EasyID3
+from mutagen.mp4 import MP4, MP4Cover
 
 # ANSI colors
 CYAN   = "\033[36m"
@@ -50,12 +51,7 @@ def _split_title(raw_title: str) -> tuple[str, str] | None:
 
 
 def _clean_channel_name(name: str) -> str:
-    suffixes = [
-        r'\s*-\s*Topic$',
-        r'\s*VEVO$',
-        r'\s*Official\s*$',
-        r'\s*Music\s*$',
-    ]
+    suffixes = [r'\s*-\s*Topic$', r'\s*VEVO$', r'\s*Official\s*$', r'\s*Music\s*$']
     for s in suffixes:
         name = re.sub(s, '', name, flags=re.IGNORECASE)
     return name.strip()
@@ -63,9 +59,7 @@ def _clean_channel_name(name: str) -> str:
 
 def extract_video_info(url: str) -> tuple[str, str, str]:
     info_cmd = [
-        "yt-dlp",
-        "--no-playlist",
-        "--quiet",
+        "yt-dlp", "--no-playlist", "--quiet",
         "--print", "%(artist)s\n%(title)s\n%(uploader)s\n%(channel)s\n%(id)s",
         "--add-header", "Accept-Language:en-US,en;q=0.9",
         "--extractor-args", "youtube:lang=en",
@@ -76,7 +70,7 @@ def extract_video_info(url: str) -> tuple[str, str, str]:
             info_cmd, capture_output=True, text=True, check=True, timeout=30
         )
     except subprocess.TimeoutExpired:
-        raise Exception("[E01] Timeout while fetching video info — check your connection")
+        raise Exception("[E01] Timeout fetching video info — check your connection")
     except subprocess.CalledProcessError as e:
         raise Exception(f"[E02] yt-dlp failed: {e.stderr.strip()}")
 
@@ -98,17 +92,15 @@ def extract_video_info(url: str) -> tuple[str, str, str]:
     return artist, _strip_noise(raw_title) or raw_title, video_id
 
 
-def download_with_progress(url: str, output_template: str) -> str:
+def download_with_progress(url: str, output_template: str, audio_format: str) -> str:
     download_cmd = [
-        "yt-dlp",
-        "--no-playlist",
+        "yt-dlp", "--no-playlist",
         "--extract-audio",
-        "--audio-format", "mp3",
+        "--audio-format", audio_format,
         "--audio-quality", "0",
         "--embed-thumbnail",
         "--add-metadata",
-        "--newline",
-        "--progress",
+        "--newline", "--progress",
         "--progress-template", "download:%(progress.percentage)s",
         "--add-header", "Accept-Language:en-US,en;q=0.9",
         "--extractor-args", "youtube:lang=en",
@@ -117,11 +109,8 @@ def download_with_progress(url: str, output_template: str) -> str:
     ]
     try:
         proc = subprocess.Popen(
-            download_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
+            download_cmd, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, text=True, bufsize=1
         )
         last_percent = -1
         for line in proc.stdout:
@@ -145,25 +134,43 @@ def download_with_progress(url: str, output_template: str) -> str:
         proc.wait()
         if proc.returncode != 0:
             raise Exception(f"[E03] yt-dlp exited with code {proc.returncode}")
-        return find_latest_mp3(os.path.dirname(output_template))
+        return find_latest_audio(os.path.dirname(output_template), audio_format)
     except Exception as e:
         raise Exception(f"[E03] Download failed: {e}")
 
 
-def find_latest_mp3(base_path: str) -> str:
-    mp3_files = []
+def find_latest_audio(base_path: str, audio_format: str) -> str:
+    """Find the most recently created audio file of the given format."""
+    ext = f".{audio_format}"
+    audio_files = []
     for root, _, files in os.walk(base_path):
         for f in files:
-            if f.endswith(".mp3"):
+            if f.endswith(ext):
                 fp = os.path.join(root, f)
-                mp3_files.append((fp, os.path.getctime(fp)))
-    if not mp3_files:
-        raise Exception("[E04] No MP3 file found after download")
-    return max(mp3_files, key=lambda x: x[1])[0]
+                audio_files.append((fp, os.path.getctime(fp)))
+    if not audio_files:
+        raise Exception(f"[E04] No {ext} file found after download — is ffmpeg installed?")
+    return max(audio_files, key=lambda x: x[1])[0]
 
 
-def _sanitize_path_component(name: str) -> str:
-    return re.sub(r'[\/\\\:\*\?\"\<\>\|]', '', name).strip() or "Unknown"
+def _write_tags(filepath: str, title: str, artist: str, audio_format: str):
+    """Write ID3 or MP4 tags depending on format."""
+    try:
+        if audio_format == "mp3":
+            audio = EasyID3(filepath)
+            audio["title"]  = [title]
+            audio["artist"] = [artist]
+            audio["genre"]  = ["Music"]
+            audio.save()
+        else:
+            # M4A uses MP4 tags
+            audio = MP4(filepath)
+            audio["\xa9nam"] = [title]   # title
+            audio["\xa9ART"] = [artist]  # artist
+            audio["\xa9gen"] = ["Music"] # genre
+            audio.save()
+    except Exception as e:
+        print(f"{YELLOW}⚠  Could not write tags: {e}{RESET}")
 
 
 def _add_to_apple_music(filepath: str):
@@ -177,10 +184,14 @@ def _add_to_apple_music(filepath: str):
             f'tell application "Music" to add POSIX file "{filepath}"'
         ], check=True, capture_output=True)
     except Exception:
-        pass  # silently skip if Music isn't available
+        pass
 
 
-def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager, user_query: str = ""):
+def _sanitize_path_component(name: str) -> str:
+    return re.sub(r'[\/\\\:\*\?\"\<\>\|]', '', name).strip() or "Unknown"
+
+
+def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager, user_query: str = "", audio_format: str = "m4a"):
     try:
         if not url.startswith(("http://", "https://")):
             print(f"{RED}❌ Invalid URL{RESET}")
@@ -217,22 +228,15 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         output_template = os.path.join(artist_dir, f"{safe_title}.%(ext)s")
 
         print(f"{DIM}   Downloading...{RESET}")
-        downloaded_file = download_with_progress(url, output_template)
+        downloaded_file = download_with_progress(url, output_template, audio_format)
 
-        desired_path = os.path.join(artist_dir, f"{safe_title}.mp3")
+        desired_path = os.path.join(artist_dir, f"{safe_title}.{audio_format}")
         if downloaded_file != desired_path and os.path.exists(downloaded_file):
             os.replace(downloaded_file, desired_path)
             downloaded_file = desired_path
 
-        # ── ID3 tags ─────────────────────────────────────────────────────────
-        try:
-            audio = EasyID3(downloaded_file)
-            audio["title"]  = [title]
-            audio["artist"] = [artist]
-            audio["genre"]  = ["Music"]
-            audio.save()
-        except Exception as e:
-            print(f"{YELLOW}⚠  Could not write tags: {e}{RESET}")
+        # ── Tags ─────────────────────────────────────────────────────────────
+        _write_tags(downloaded_file, title, artist, audio_format)
 
         # ── Content duplicate check ──────────────────────────────────────────
         is_dup, existing_file = duplicate_checker.is_duplicate(downloaded_file)
@@ -247,6 +251,7 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         file_hash = duplicate_checker.compute_file_hash(downloaded_file)
         duplicate_checker.register(video_id, file_hash, downloaded_file)
 
+        # ── Apple Music ──────────────────────────────────────────────────────
         _add_to_apple_music(downloaded_file)
 
         # ── Lyrics ───────────────────────────────────────────────────────────
@@ -255,7 +260,7 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
             downloaded_file, title, artist, user_query=user_query
         )
 
-        # ── Final summary ────────────────────────────────────────────────────
+        # ── Summary ──────────────────────────────────────────────────────────
         print(f"{GREEN}✅ {artist} — {title}{RESET}")
         print(lyrics_status)
 
