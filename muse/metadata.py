@@ -1,5 +1,4 @@
 import re
-from turtle import title
 
 # ANSI colors
 DIM   = "\033[2m"
