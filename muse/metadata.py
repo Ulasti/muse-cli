@@ -57,16 +57,24 @@ def lookup_metadata(artist: str, title: str, is_cover: bool = False) -> dict:
         musicbrainzngs.set_useragent(
             'muse-cli', '1.0', 'https://github.com/Ulasti/muse-cli'
         )
+        time.sleep(1) 
 
-        if is_cover:
-            # Title only — top result by MusicBrainz score = most popular version
-            result = musicbrainzngs.search_recordings(
-                recording=title, limit=1
-            )
-        else:
-            result = musicbrainzngs.search_recordings(
-                artist=artist, recording=title, limit=5
-            )
+        for attempt in range(2):
+            try:
+                if is_cover:
+                    result = musicbrainzngs.search_recordings(
+                        recording=title, limit=1
+                    )
+                else:
+                    result = musicbrainzngs.search_recordings(
+                        artist=artist, recording=title, limit=5
+                    )
+                break
+            except Exception:
+                if attempt == 0:
+                    time.sleep(2)
+                    continue
+                return {}
 
         recordings = result.get('recording-list', [])
 
