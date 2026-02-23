@@ -16,7 +16,7 @@ def _clean_for_search(text: str) -> str:
     text = text.split('|')[0]
     text = re.split(r'\s*/\s*', text)[0]
     text = re.sub(r'\(.*?cover.*?\)', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^)]*$', '', text)                                          # unclosed "("
+    text = re.sub(r'\([^)]*$', '', text)
     text = re.sub(r'\(.*?\)', '', text)
     text = re.sub(r'\[.*?\]', '', text)
     text = re.sub(r'\s*(?:ft|feat|con)\.?\s+.+', '', text, flags=re.IGNORECASE)
@@ -71,7 +71,8 @@ class LyricsManager:
                 print(f"{YELLOW}⚠  [E05] Genius init failed: {e}{RESET}")
 
     def fetch_and_embed(self, file_path: str, title: str, artist: str,
-                        user_query: str = "", audio_format: str = "m4a") -> LyricsResult:
+                        user_query: str = "", audio_format: str = "m4a",
+                        is_cover: bool = False) -> LyricsResult:
         if not self.genius:
             return LyricsResult(
                 f"{YELLOW}⚠  Lyrics unavailable — no API token (run muse-cli --config){RESET}"
@@ -80,20 +81,24 @@ class LyricsManager:
         clean_title  = _clean_for_search(title)
         clean_artist = _clean_for_search(artist)
 
-        # Strategy 1: clean title + artist (more precise than title-only now
-        #             that MusicBrainz has already confirmed the artist name)
-        song = self._search(clean_title, clean_artist)
+        # Strategy 1: covers — search title only so we get the original artist's lyrics
+        #             normal songs — search title + artist for precision
+        if is_cover:
+            song = self._search(clean_title, None)
+        else:
+            song = self._search(clean_title, clean_artist)
 
-        # Strategy 2: clean title only
-        if not song:
+        # Strategy 2: title only (for normal songs that failed artist+title)
+        if not song and not is_cover:
             song = self._search(clean_title, None)
 
         # Strategy 3: user query as last resort
         if not song and user_query and user_query.strip():
             song = self._search(user_query.strip(), None)
 
-        # Strategy 4: walk artist's song list on Genius
-        if not song and clean_artist and clean_artist.lower() not in ("unknown artist", "na", ""):
+        # Strategy 4: walk artist's song list on Genius (skip for covers)
+        if not song and not is_cover and clean_artist and \
+                clean_artist.lower() not in ("unknown artist", "na", ""):
             try:
                 genius_artist = self.genius.search_artist(
                     clean_artist, max_songs=10, sort="popularity"

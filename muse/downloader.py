@@ -283,7 +283,8 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         print(f"{DIM}   Fetching lyrics...{RESET}", end="\r")
         result = lyrics_manager.fetch_and_embed(
             downloaded_file, final_title, final_artist,
-            user_query=user_query, audio_format=audio_format
+            user_query=user_query, audio_format=audio_format,
+            is_cover=is_cover
         )
 
         # ── Write tags ───────────────────────────────────────────────────────
