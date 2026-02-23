@@ -166,6 +166,20 @@ def _sanitize_path_component(name: str) -> str:
     return re.sub(r'[\/\\\:\*\?\"\<\>\|]', '', name).strip() or "Unknown"
 
 
+def _add_to_apple_music(filepath: str):
+    """Add the downloaded file to Apple Music on macOS."""
+    import platform
+    if platform.system() != "Darwin":
+        return
+    try:
+        subprocess.run([
+            "osascript", "-e",
+            f'tell application "Music" to add POSIX file "{filepath}"'
+        ], check=True, capture_output=True)
+    except Exception:
+        pass  # silently skip if Music isn't available
+
+
 def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager, user_query: str = ""):
     try:
         if not url.startswith(("http://", "https://")):
@@ -232,6 +246,8 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
 
         file_hash = duplicate_checker.compute_file_hash(downloaded_file)
         duplicate_checker.register(video_id, file_hash, downloaded_file)
+
+        _add_to_apple_music(downloaded_file)
 
         # ── Lyrics ───────────────────────────────────────────────────────────
         print(f"{DIM}   Fetching lyrics...{RESET}", end="\r")
