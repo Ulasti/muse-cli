@@ -10,32 +10,20 @@ Music downloading made easy with built in lyrics embedding packaged into a cli-t
 - pipx
 - ffmpeg
 
-### Install ffmpeg
+### Install muse
 
 ```bash
-# macOS
-brew install ffmpeg
 
-# Ubuntu/Debian
-sudo apt install ffmpeg
-```
-
-### Install pipx
-
-```bash
-# macOS
-brew install pipx
-
-# Linux
-pip install pipx
+MacOS/Linux
+curl -fsSL https://raw.githubusercontent.com/Ulasti/muse-cli/main/install.sh | bash
 ```
 
 ---
 
-## Install
+## Update
 
 ```bash
-pipx install git+https://github.com/Ulasti/muse-cli.git
+muse-cli --update
 ```
 
 ---
