@@ -10,11 +10,9 @@ Music downloading made easy with built in lyrics embedding packaged into a cli-t
 - pipx
 - ffmpeg
 
-### Install muse
+### Install muse (Mac and Linux)
 
 ```bash
-
-MacOS/Linux
 curl -fsSL https://raw.githubusercontent.com/Ulasti/muse-cli/main/install.sh | bash
 ```
 
