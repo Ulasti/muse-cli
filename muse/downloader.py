@@ -2,7 +2,7 @@ import os
 import subprocess
 import re
 from mutagen.easyid3 import EasyID3
-from mutagen.mp4 import MP4, MP4Cover
+from mutagen.mp4 import MP4
 
 # ANSI colors
 CYAN   = "\033[36m"
@@ -17,12 +17,16 @@ BAR_LENGTH = 40
 _NOISE_PATTERNS = [
     r'\(Official\s*(Music\s*)?Video\)',
     r'\(Official\s*(Audio|Lyric)\)',
+    r'\(Lyrics?\|Letra\)',
+    r'\(Letra\)',                          # Spanish "lyrics"
     r'\(Lyrics?\)',
     r'\(HD\)',
     r'\(.*?cover.*?\)',
-    r'\(.*?(?:Official|Video|Audio|Lyric|HD|MV|mv).*?\)',
-    r'\[.*?(?:Official|Video|Audio|Lyric|HD|MV|mv).*?\]',
+    r'\(.*?(?:Official|Video|Audio|Lyric|HD|MV|mv|Session|sessions|acoustic|live).*?\)',
+    r'\[.*?(?:Official|Video|Audio|Lyric|HD|MV|mv|Session|sessions|acoustic|live).*?\]',
     r'(?:ft|feat)\.?\s+[^\-\(]+',
+    r'\([^)]*$',                           # unclosed parenthesis like "(Cabin Sessions 1"
+    r'\[[^\]]*$',                          # unclosed bracket
     r'\s{2,}',
 ]
 
@@ -30,6 +34,7 @@ _SEPARATORS = [' - ', ' – ', ' — ', ': ']
 
 
 def _strip_noise(text: str) -> str:
+    """Strip album bleed, session/live tags, and all YouTube noise from a title."""
     text = text.split('|')[0]
     text = re.split(r'\s*/\s*', text)[0]
     for pattern in _NOISE_PATTERNS[:-1]:
@@ -140,7 +145,6 @@ def download_with_progress(url: str, output_template: str, audio_format: str) ->
 
 
 def find_latest_audio(base_path: str, audio_format: str) -> str:
-    """Find the most recently created audio file of the given format."""
     ext = f".{audio_format}"
     audio_files = []
     for root, _, files in os.walk(base_path):
@@ -149,32 +153,39 @@ def find_latest_audio(base_path: str, audio_format: str) -> str:
                 fp = os.path.join(root, f)
                 audio_files.append((fp, os.path.getctime(fp)))
     if not audio_files:
-        raise Exception(f"[E04] No {ext} file found after download — is ffmpeg installed?")
+        raise Exception(f"[E04] No {ext} file found — is ffmpeg installed?")
     return max(audio_files, key=lambda x: x[1])[0]
 
 
-def _write_tags(filepath: str, title: str, artist: str, audio_format: str):
-    """Write ID3 or MP4 tags depending on format."""
+def _write_tags(filepath: str, title: str, artist: str, album: str,
+                release_date: str, audio_format: str):
+    """Write metadata tags — ID3 for MP3, MP4 atoms for M4A."""
     try:
         if audio_format == "mp3":
             audio = EasyID3(filepath)
             audio["title"]  = [title]
             audio["artist"] = [artist]
             audio["genre"]  = ["Music"]
+            if album:
+                audio["album"] = [album]
+            if release_date:
+                audio["date"] = [release_date]
             audio.save()
         else:
-            # M4A uses MP4 tags
             audio = MP4(filepath)
-            audio["\xa9nam"] = [title]   # title
-            audio["\xa9ART"] = [artist]  # artist
-            audio["\xa9gen"] = ["Music"] # genre
+            audio["\xa9nam"] = [title]
+            audio["\xa9ART"] = [artist]
+            audio["\xa9gen"] = ["Music"]
+            if album:
+                audio["\xa9alb"] = [album]
+            if release_date:
+                audio["\xa9day"] = [release_date]
             audio.save()
     except Exception as e:
         print(f"{YELLOW}⚠  Could not write tags: {e}{RESET}")
 
 
 def _add_to_apple_music(filepath: str):
-    """Add the downloaded file to Apple Music on macOS."""
     import platform
     if platform.system() != "Darwin":
         return
@@ -191,7 +202,8 @@ def _sanitize_path_component(name: str) -> str:
     return re.sub(r'[\/\\\:\*\?\"\<\>\|]', '', name).strip() or "Unknown"
 
 
-def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager, user_query: str = "", audio_format: str = "m4a"):
+def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
+                  user_query: str = "", audio_format: str = "m4a"):
     try:
         if not url.startswith(("http://", "https://")):
             print(f"{RED}❌ Invalid URL{RESET}")
@@ -223,46 +235,67 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         # ── Download ─────────────────────────────────────────────────────────
         safe_artist = _sanitize_path_component(artist)
         safe_title  = _sanitize_path_component(title)
-        artist_dir  = os.path.join(output_base, safe_artist)
-        os.makedirs(artist_dir, exist_ok=True)
-        output_template = os.path.join(artist_dir, f"{safe_title}.%(ext)s")
+
+        # Temp dir while we don't know the album yet
+        temp_dir = os.path.join(output_base, safe_artist, "Unknown Album")
+        os.makedirs(temp_dir, exist_ok=True)
+        output_template = os.path.join(temp_dir, f"{safe_title}.%(ext)s")
 
         print(f"{DIM}   Downloading...{RESET}")
         downloaded_file = download_with_progress(url, output_template, audio_format)
 
-        desired_path = os.path.join(artist_dir, f"{safe_title}.{audio_format}")
+        desired_path = os.path.join(temp_dir, f"{safe_title}.{audio_format}")
         if downloaded_file != desired_path and os.path.exists(downloaded_file):
             os.replace(downloaded_file, desired_path)
             downloaded_file = desired_path
 
-        # ── Tags ─────────────────────────────────────────────────────────────
-        _write_tags(downloaded_file, title, artist, audio_format)
-
         # ── Content duplicate check ──────────────────────────────────────────
         is_dup, existing_file = duplicate_checker.is_duplicate(downloaded_file)
         if is_dup:
-            print(f"{YELLOW}⚠  Duplicate content detected, removing...{RESET}")
+            print(f"{YELLOW}⚠  Duplicate content, removing...{RESET}")
             try:
                 os.remove(downloaded_file)
             except Exception:
                 pass
             return
 
-        file_hash = duplicate_checker.compute_file_hash(downloaded_file)
-        duplicate_checker.register(video_id, file_hash, downloaded_file)
-
-        # ── Apple Music ──────────────────────────────────────────────────────
-        _add_to_apple_music(downloaded_file)
-
-        # ── Lyrics ───────────────────────────────────────────────────────────
+        # ── Lyrics + metadata from Genius ────────────────────────────────────
         print(f"{DIM}   Fetching lyrics...{RESET}", end="\r")
-        lyrics_status = lyrics_manager.fetch_and_embed(
-            downloaded_file, title, artist, user_query=user_query
+        result = lyrics_manager.fetch_and_embed(
+            downloaded_file, title, artist,
+            user_query=user_query, audio_format=audio_format
         )
 
-        # ── Summary ──────────────────────────────────────────────────────────
+        # ── Move to final folder if we got an album name ──────────────────────
+        album = result.album or "Unknown Album"
+        safe_album = _sanitize_path_component(album)
+        final_dir  = os.path.join(output_base, safe_artist, safe_album)
+
+        if final_dir != temp_dir:
+            os.makedirs(final_dir, exist_ok=True)
+            final_path = os.path.join(final_dir, f"{safe_title}.{audio_format}")
+            os.replace(downloaded_file, final_path)
+            downloaded_file = final_path
+            # Clean up empty temp dir
+            try:
+                os.rmdir(temp_dir)
+            except Exception:
+                pass
+
+        # ── Write tags with album info ────────────────────────────────────────
+        _write_tags(downloaded_file, title, artist, album,
+                    result.release_date, audio_format)
+
+        # ── Register + Apple Music ────────────────────────────────────────────
+        file_hash = duplicate_checker.compute_file_hash(downloaded_file)
+        duplicate_checker.register(video_id, file_hash, downloaded_file)
+        _add_to_apple_music(downloaded_file)
+
+        # ── Summary ───────────────────────────────────────────────────────────
         print(f"{GREEN}✅ {artist} — {title}{RESET}")
-        print(lyrics_status)
+        if album != "Unknown Album":
+            print(f"{DIM}   Album: {album}{RESET}")
+        print(result.status)
 
     except KeyboardInterrupt:
         raise

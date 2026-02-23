@@ -150,7 +150,8 @@ def main():
                                     config["output_base"],
                                     duplicate_checker,
                                     lyrics_manager,
-                                    user_query=query
+                                    user_query=query,
+                                    audio_format=config["audio_format"]
                                 )
                                 break
                             else:
@@ -169,7 +170,8 @@ def main():
                     config["output_base"],
                     duplicate_checker,
                     lyrics_manager,
-                    user_query=""
+                    user_query="",
+                    audio_format=config["audio_format"]
                 )
 
             # ── Direct download ──────────────────────────────────────────────
@@ -185,7 +187,8 @@ def main():
                         config["output_base"],
                         duplicate_checker,
                         lyrics_manager,
-                        user_query=user_input
+                        user_query=user_input,
+                        audio_format=config["audio_format"]
                     )
                 else:
                     print(f"{RED}No results found{RESET}")
