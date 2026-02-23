@@ -73,7 +73,8 @@ def lookup_metadata(artist: str, title: str, is_cover: bool = False) -> dict:
             rec_artist = recording.get('artist-credit-phrase', '')
             title_score = _title_score(rec_title, title)
 
-            if title_score < 0.6:
+            threshold = 0.85 if is_cover else 0.6
+            if title_score < threshold:
                 continue
 
             releases = recording.get('release-list', [])
