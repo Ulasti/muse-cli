@@ -121,7 +121,17 @@ else
     else
         fail "pipx install failed — try: brew install pipx"
     fi
+    
 fi
+
+# Add to .bashrc/.zprofile permanently so muse-cli is found after restart
+if ! grep -q '\.local/bin' "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
+fi
+if ! grep -q '\.local/bin' "$HOME/.zprofile" 2>/dev/null; then
+    echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.zprofile" 2>/dev/null || true
+fi
+export PATH="$HOME/.local/bin:$PATH"
 
 # ── Find pipx binary ──────────────────────────────────────────────────────────
 PIPX_BIN=""
