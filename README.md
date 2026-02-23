@@ -13,7 +13,7 @@ Music downloading made easy with built in lyrics embedding packaged into a cli-t
 ### Install muse (Mac and Linux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ulasti/muse-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Ulasti/muse-cli/main/install.sh -o /tmp/muse-install.sh && bash /tmp/muse-install.sh
 ```
 
 ---
