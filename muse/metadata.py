@@ -1,4 +1,5 @@
 import re
+from turtle import title
 
 # ANSI colors
 DIM   = "\033[2m"
@@ -35,8 +36,10 @@ def _pick_best_release(releases: list) -> dict:
         type_score = len(_PREFERRED_TYPES) - _PREFERRED_TYPES.index(rtype) \
                      if rtype in _PREFERRED_TYPES else 0
         title   = rel.get('title', '').lower()
-        penalty = 1 if any(w in title for w in
-                           ['reissue', 'remaster', 'compilation', 'mix', 'commentary']) else 0
+        penalty = 1 if any(w in title for w in [
+            'reissue', 'remaster', 'compilation', 'mix', 'commentary',
+            'live', 'concert', 'festival', 'bootleg', 'tour', 'unplugged'
+        ]) else 0
         return type_score - penalty
 
     scored = sorted(releases, key=release_score, reverse=True)
