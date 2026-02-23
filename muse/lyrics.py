@@ -120,7 +120,7 @@ class LyricsManager:
             release_date = ""
             try:
                 if hasattr(song, 'album') and song.album:
-                    album = song.album
+                    album = song.album if isinstance(song.album, str) else song.album.get('name', '') if isinstance(song.album, dict) else ''
                 if hasattr(song, 'release_date') and song.release_date:
                     release_date = str(song.release_date)[:4]  # just the year
             except Exception:
