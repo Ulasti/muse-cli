@@ -13,21 +13,19 @@ RESET  = "\033[0m"
 
 def _clean_for_search(text: str) -> str:
     """Strip all noise from a title for Genius search."""
-    text = text.split('|')[0]                                                     # "SONG | ALBUM" → "SONG"
-    text = re.split(r'\s*/\s*', text)[0]                                          # "SONG / Live" → "SONG"
-    text = re.sub(r'\(.*?cover.*?\)', '', text, flags=re.IGNORECASE)              # "(Tame Impala cover)"
-    text = re.sub(r'\([^)]*$', '', text)                                          # unclosed "(" like "(Cabin Sessions 1"
-    text = re.sub(r'\(.*?\)', '', text)                                           # remaining (...)
-    text = re.sub(r'\[.*?\]', '', text)                                           # [...]
-    text = re.sub(r'\s*(?:ft|feat|con)\.?\s+.+', '', text, flags=re.IGNORECASE)  # feat. artist
+    text = text.split('|')[0]
+    text = re.split(r'\s*/\s*', text)[0]
+    text = re.sub(r'\(.*?cover.*?\)', '', text, flags=re.IGNORECASE)
+    text = re.sub(r'\([^)]*$', '', text)                                          # unclosed "("
+    text = re.sub(r'\(.*?\)', '', text)
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'\s*(?:ft|feat|con)\.?\s+.+', '', text, flags=re.IGNORECASE)
     text = re.sub(r'\s{2,}', ' ', text)
     return text.strip(' -–—|')
 
 
 def _embed_lyrics(file_path: str, lyrics_text: str, audio_format: str):
-    """Write lyrics tag — USLT for MP3, \©lyr for M4A."""
     if audio_format == "mp3":
-        from mutagen.id3 import USLT
         id3 = ID3(file_path)
         id3["USLT"] = USLT(encoding=3, lang='eng', desc='desc', text=lyrics_text)
         id3.save()
@@ -52,11 +50,8 @@ def _titles_match(a: str, b: str) -> bool:
 
 
 class LyricsResult:
-    """Carries lyrics status + any metadata Genius returned."""
-    def __init__(self, status: str, album: str = "", release_date: str = ""):
-        self.status       = status
-        self.album        = album
-        self.release_date = release_date
+    def __init__(self, status: str):
+        self.status = status
 
 
 class LyricsManager:
@@ -78,23 +73,26 @@ class LyricsManager:
     def fetch_and_embed(self, file_path: str, title: str, artist: str,
                         user_query: str = "", audio_format: str = "m4a") -> LyricsResult:
         if not self.genius:
-            return LyricsResult(f"{YELLOW}⚠  Lyrics unavailable — no API token (run muse-cli --config){RESET}")
+            return LyricsResult(
+                f"{YELLOW}⚠  Lyrics unavailable — no API token (run muse-cli --config){RESET}"
+            )
 
         clean_title  = _clean_for_search(title)
         clean_artist = _clean_for_search(artist)
 
-        # Strategy 1: clean title only
-        song = self._search(clean_title, None)
+        # Strategy 1: clean title + artist (more precise than title-only now
+        #             that MusicBrainz has already confirmed the artist name)
+        song = self._search(clean_title, clean_artist)
 
-        # Strategy 2: clean title + artist
+        # Strategy 2: clean title only
         if not song:
-            song = self._search(clean_title, clean_artist)
+            song = self._search(clean_title, None)
 
         # Strategy 3: user query as last resort
         if not song and user_query and user_query.strip():
             song = self._search(user_query.strip(), None)
 
-        # Strategy 4: walk artist's song list
+        # Strategy 4: walk artist's song list on Genius
         if not song and clean_artist and clean_artist.lower() not in ("unknown artist", "na", ""):
             try:
                 genius_artist = self.genius.search_artist(
@@ -102,7 +100,8 @@ class LyricsManager:
                 )
                 if genius_artist:
                     for s in genius_artist.songs:
-                        if _titles_match(s.title, clean_title) or _titles_match(s.title, user_query):
+                        if _titles_match(s.title, clean_title) or \
+                           _titles_match(s.title, user_query):
                             song = self._search(s.title, clean_artist)
                             if song:
                                 break
@@ -114,22 +113,13 @@ class LyricsManager:
                 _embed_lyrics(file_path, song.lyrics, audio_format)
             except Exception as e:
                 return LyricsResult(f"{YELLOW}⚠  Lyrics found but embed failed: {e}{RESET}")
+            return LyricsResult(
+                f"{DIM}   Lyrics: \"{song.title}\" by {song.artist}{RESET}"
+            )
 
-            # Extract metadata from Genius song object
-            album        = ""
-            release_date = ""
-            try:
-                if hasattr(song, 'album') and song.album:
-                    album = song.album if isinstance(song.album, str) else song.album.get('name', '') if isinstance(song.album, dict) else ''
-                if hasattr(song, 'release_date') and song.release_date:
-                    release_date = str(song.release_date)[:4]  # just the year
-            except Exception:
-                pass
-
-            status = f"{DIM}   Lyrics: \"{song.title}\" by {song.artist}{RESET}"
-            return LyricsResult(status, album=album, release_date=release_date)
-
-        return LyricsResult(f"{YELLOW}⚠  Lyrics not found for \"{clean_title}\"{RESET}")
+        return LyricsResult(
+            f"{YELLOW}⚠  Lyrics not found for \"{clean_title}\"{RESET}"
+        )
 
     def _search(self, title: str, artist: str | None):
         try:

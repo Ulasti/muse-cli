@@ -7,7 +7,7 @@ setup(
     name="muse-cli",
     version="1.0.0",
     author="ulasti",
-    description="A CLI tool to download music from the internet with lyrics",
+    description="A CLI tool to download audio from YouTube with lyrics and metadata",
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/Ulasti/muse-cli",
@@ -17,11 +17,12 @@ setup(
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=[
         "yt-dlp>=2023.3.4",
         "mutagen>=1.47.0",
         "lyricsgenius>=3.0.1",
+        "musicbrainzngs>=0.7.1",
     ],
     entry_points={
         "console_scripts": [

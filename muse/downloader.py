@@ -18,15 +18,15 @@ _NOISE_PATTERNS = [
     r'\(Official\s*(Music\s*)?Video\)',
     r'\(Official\s*(Audio|Lyric)\)',
     r'\(Lyrics?\|Letra\)',
-    r'\(Letra\)',                          # Spanish "lyrics"
+    r'\(Letra\)',
     r'\(Lyrics?\)',
     r'\(HD\)',
     r'\(.*?cover.*?\)',
     r'\(.*?(?:Official|Video|Audio|Lyric|HD|MV|mv|Session|sessions|acoustic|live).*?\)',
     r'\[.*?(?:Official|Video|Audio|Lyric|HD|MV|mv|Session|sessions|acoustic|live).*?\]',
     r'(?:ft|feat)\.?\s+[^\-\(]+',
-    r'\([^)]*$',                           # unclosed parenthesis like "(Cabin Sessions 1"
-    r'\[[^\]]*$',                          # unclosed bracket
+    r'\([^)]*$',                           # unclosed "("
+    r'\[[^\]]*$',                          # unclosed "["
     r'\s{2,}',
 ]
 
@@ -34,7 +34,6 @@ _SEPARATORS = [' - ', ' – ', ' — ', ': ']
 
 
 def _strip_noise(text: str) -> str:
-    """Strip album bleed, session/live tags, and all YouTube noise from a title."""
     text = text.split('|')[0]
     text = re.split(r'\s*/\s*', text)[0]
     for pattern in _NOISE_PATTERNS[:-1]:
@@ -158,8 +157,7 @@ def find_latest_audio(base_path: str, audio_format: str) -> str:
 
 
 def _write_tags(filepath: str, title: str, artist: str, album: str,
-                release_date: str, audio_format: str):
-    """Write metadata tags — ID3 for MP3, MP4 atoms for M4A."""
+                year: str, audio_format: str):
     try:
         if audio_format == "mp3":
             audio = EasyID3(filepath)
@@ -168,8 +166,8 @@ def _write_tags(filepath: str, title: str, artist: str, album: str,
             audio["genre"]  = ["Music"]
             if album:
                 audio["album"] = [album]
-            if release_date:
-                audio["date"] = [release_date]
+            if year:
+                audio["date"] = [year]
             audio.save()
         else:
             audio = MP4(filepath)
@@ -178,8 +176,8 @@ def _write_tags(filepath: str, title: str, artist: str, album: str,
             audio["\xa9gen"] = ["Music"]
             if album:
                 audio["\xa9alb"] = [album]
-            if release_date:
-                audio["\xa9day"] = [release_date]
+            if year:
+                audio["\xa9day"] = [year]
             audio.save()
     except Exception as e:
         print(f"{YELLOW}⚠  Could not write tags: {e}{RESET}")
@@ -209,7 +207,7 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
             print(f"{RED}❌ Invalid URL{RESET}")
             return
 
-        # ── Fetch info ───────────────────────────────────────────────────────
+        # ── Fetch video info ─────────────────────────────────────────────────
         print(f"{DIM}   Fetching info...{RESET}", end="\r")
         artist, title, video_id = extract_video_info(url)
         print(f"   {GREEN}▶ {artist} — {title}{RESET}          ")
@@ -232,19 +230,38 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
                 pass
             duplicate_checker.remove_entries(video_id, existing_file)
 
-        # ── Download ─────────────────────────────────────────────────────────
-        safe_artist = _sanitize_path_component(artist)
-        safe_title  = _sanitize_path_component(title)
+        # ── MusicBrainz metadata lookup ──────────────────────────────────────
+        print(f"{DIM}   Looking up metadata...{RESET}", end="\r")
+        from .metadata import lookup_metadata
+        mb = lookup_metadata(artist, title)
 
-        # Temp dir while we don't know the album yet
-        temp_dir = os.path.join(output_base, safe_artist, "Unknown Album")
-        os.makedirs(temp_dir, exist_ok=True)
-        output_template = os.path.join(temp_dir, f"{safe_title}.%(ext)s")
+        # Use MusicBrainz data if found, fall back to YouTube data
+        final_artist = mb.get('artist') or artist
+        final_title  = mb.get('title')  or title
+        album        = mb.get('album')  or ""
+        year         = mb.get('year')   or ""
+
+        if mb:
+            print(f"{DIM}   Metadata: {final_artist} — {final_title}"
+                  f"{(' / ' + album) if album else ''}"
+                  f"{(' (' + year + ')') if year else ''}{RESET}          ")
+        else:
+            # Clear the looking up line
+            print(f"   {DIM}Metadata not found on MusicBrainz{RESET}          ")
+
+        # ── Download ─────────────────────────────────────────────────────────
+        safe_artist = _sanitize_path_component(final_artist)
+        safe_title  = _sanitize_path_component(final_title)
+        safe_album  = _sanitize_path_component(album) if album else "Unknown Album"
+
+        artist_dir = os.path.join(output_base, safe_artist, safe_album)
+        os.makedirs(artist_dir, exist_ok=True)
+        output_template = os.path.join(artist_dir, f"{safe_title}.%(ext)s")
 
         print(f"{DIM}   Downloading...{RESET}")
         downloaded_file = download_with_progress(url, output_template, audio_format)
 
-        desired_path = os.path.join(temp_dir, f"{safe_title}.{audio_format}")
+        desired_path = os.path.join(artist_dir, f"{safe_title}.{audio_format}")
         if downloaded_file != desired_path and os.path.exists(downloaded_file):
             os.replace(downloaded_file, desired_path)
             downloaded_file = desired_path
@@ -259,42 +276,26 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
                 pass
             return
 
-        # ── Lyrics + metadata from Genius ────────────────────────────────────
+        # ── Lyrics ───────────────────────────────────────────────────────────
         print(f"{DIM}   Fetching lyrics...{RESET}", end="\r")
         result = lyrics_manager.fetch_and_embed(
-            downloaded_file, title, artist,
+            downloaded_file, final_title, final_artist,
             user_query=user_query, audio_format=audio_format
         )
 
-        # ── Move to final folder if we got an album name ──────────────────────
-        album = result.album or "Unknown Album"
-        safe_album = _sanitize_path_component(album)
-        final_dir  = os.path.join(output_base, safe_artist, safe_album)
-
-        if final_dir != temp_dir:
-            os.makedirs(final_dir, exist_ok=True)
-            final_path = os.path.join(final_dir, f"{safe_title}.{audio_format}")
-            os.replace(downloaded_file, final_path)
-            downloaded_file = final_path
-            # Clean up empty temp dir
-            try:
-                os.rmdir(temp_dir)
-            except Exception:
-                pass
-
-        # ── Write tags with album info ────────────────────────────────────────
-        _write_tags(downloaded_file, title, artist, album,
-                    result.release_date, audio_format)
+        # ── Write tags ───────────────────────────────────────────────────────
+        _write_tags(downloaded_file, final_title, final_artist,
+                    album, year, audio_format)
 
         # ── Register + Apple Music ────────────────────────────────────────────
         file_hash = duplicate_checker.compute_file_hash(downloaded_file)
         duplicate_checker.register(video_id, file_hash, downloaded_file)
         _add_to_apple_music(downloaded_file)
 
-        # ── Summary ───────────────────────────────────────────────────────────
-        print(f"{GREEN}✅ {artist} — {title}{RESET}")
-        if album != "Unknown Album":
-            print(f"{DIM}   Album: {album}{RESET}")
+        # ── Summary ──────────────────────────────────────────────────────────
+        print(f"{GREEN}✅ {final_artist} — {final_title}{RESET}")
+        if album:
+            print(f"{DIM}   Album: {album}{(' (' + year + ')') if year else ''}{RESET}")
         print(result.status)
 
     except KeyboardInterrupt:
