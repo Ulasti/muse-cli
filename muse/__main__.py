@@ -113,6 +113,45 @@ def main():
         print(f"{RED}❌ Failed to create output directory: {e}{RESET}")
         sys.exit(1)
 
+    # Non-interactive single-run mode: if arguments are provided (and
+    # not one of the special flags handled above), treat them as a
+    # search query or URL, run the download once and exit. This makes
+    # `muse-cli <song name>` usable from automations/ssh scripts.
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:]).strip()
+        if query:
+            if query.startswith(("http://", "https://", "www.")):
+                if query.startswith("www."):
+                    query = "https://" + query
+                download_song(
+                    query,
+                    config["output_base"],
+                    duplicate_checker,
+                    lyrics_manager,
+                    user_query="",
+                    audio_format=config["audio_format"]
+                )
+            else:
+                print(f"{CYAN}🔍 Searching for top result: {query}{RESET}")
+                results = search_youtube(query, max_results=1)
+
+                if results:
+                    top = results[0]
+                    print(f"{GREEN}Found:{RESET} {top['title']}  {CYAN}by{RESET} {top['uploader']}")
+                    download_song(
+                        top['url'],
+                        config["output_base"],
+                        duplicate_checker,
+                        lyrics_manager,
+                        user_query=query,
+                        audio_format=config["audio_format"]
+                    )
+                else:
+                    print(f"{RED}No results found{RESET}")
+
+        # single-shot run complete
+        return
+
     print_banner()
 
     try:
