@@ -4,11 +4,11 @@ import subprocess
 import re
 
 # ANSI colors
-CYAN = "\033[36m"
+CYAN  = "\033[36m"
 WHITE = "\033[97m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
-RED = "\033[31m"
+RED   = "\033[31m"
 RESET = "\033[0m"
 
 
@@ -16,7 +16,7 @@ def check_dependencies():
     """Check if required external tools are installed."""
     required_tools = ["yt-dlp", "ffmpeg"]
     missing = []
-    
+
     for tool in required_tools:
         found = False
         try:
@@ -30,9 +30,10 @@ def check_dependencies():
         except (subprocess.CalledProcessError, FileNotFoundError):
             if tool == "ffmpeg":
                 common_locations = [
-                    "/opt/homebrew/bin/ffmpeg",
-                    "/usr/local/bin/ffmpeg",
-                    "/opt/local/bin/ffmpeg"
+                    "/usr/bin/ffmpeg",           # Linux / Pi OS
+                    "/usr/local/bin/ffmpeg",     # Linux alt
+                    "/opt/homebrew/bin/ffmpeg",  # macOS Apple Silicon
+                    "/opt/local/bin/ffmpeg",     # macOS MacPorts
                 ]
                 for location in common_locations:
                     if os.path.exists(location) and os.access(location, os.X_OK):
@@ -40,10 +41,22 @@ def check_dependencies():
                         found = True
                         print(f"{GREEN}✓ Found {tool} at {location}{RESET}")
                         break
-        
+            elif tool == "yt-dlp":
+                ytdlp_locations = [
+                    "/usr/local/bin/yt-dlp",
+                    "/usr/bin/yt-dlp",
+                    os.path.expanduser("~/.local/bin/yt-dlp"),
+                ]
+                for location in ytdlp_locations:
+                    if os.path.exists(location) and os.access(location, os.X_OK):
+                        os.environ["PATH"] = f"{os.path.dirname(location)}:{os.environ.get('PATH', '')}"
+                        found = True
+                        print(f"{GREEN}✓ Found {tool} at {location}{RESET}")
+                        break
+
         if not found:
             missing.append(tool)
-    
+
     if missing:
         print(f"{RED}❌ Missing required dependencies: {', '.join(missing)}{RESET}")
         print(f"{YELLOW}Install them with:{RESET}")
@@ -53,7 +66,6 @@ def check_dependencies():
             elif tool == "ffmpeg":
                 print(f"  brew install ffmpeg  # macOS")
                 print(f"  sudo apt install ffmpeg  # Ubuntu/Debian")
-        
         choice = input(f"\n{WHITE}Try to install missing tools automatically? (y/N): {RESET}").strip().lower()
         if choice == 'y':
             install_system_dependencies(missing)
@@ -69,11 +81,13 @@ def install_system_dependencies(tools):
         if tool == "yt-dlp":
             print(f"{CYAN}Installing yt-dlp...{RESET}")
             try:
-                subprocess.check_call([sys.executable, "-m", "pip", "install", "--break-system-packages", "yt-dlp"])
+                subprocess.check_call([
+                    sys.executable, "-m", "pip", "install",
+                    "--break-system-packages", "yt-dlp"
+                ])
                 print(f"{GREEN}✓ yt-dlp installed{RESET}")
-            except:
+            except Exception:
                 print(f"{RED}Failed to install yt-dlp{RESET}")
-        
         elif tool == "ffmpeg":
             print(f"{YELLOW}ffmpeg must be installed manually:{RESET}")
             if sys.platform == "darwin":
