@@ -25,7 +25,7 @@ OS="$(uname -s)"
 ARCH="$(uname -m)"
 ERRORS=0
 
-# Always expand PATH upfront so freshly installed tools are findable
+# Expand PATH upfront so freshly installed tools are visible immediately
 export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 has() { command -v "$1" &>/dev/null; }
@@ -43,17 +43,23 @@ else
     echo -e "  Installing ffmpeg..."
     if [[ "$OS" == "Darwin" ]]; then
         if has brew; then
-            brew install ffmpeg >/dev/null 2>&1 \
-                && INSTALLED_FFMPEG=true && ok "ffmpeg installed" \
-                || fail "ffmpeg install failed — try: brew install ffmpeg"
+            brew install ffmpeg >/dev/null 2>&1 || true
+            if has ffmpeg; then
+                INSTALLED_FFMPEG=true; ok "ffmpeg installed"
+            else
+                fail "ffmpeg install failed — try: brew install ffmpeg"
+            fi
         else
             fail "Homebrew not found — install from https://brew.sh then re-run"
         fi
     elif [[ "$OS" == "Linux" ]]; then
-        sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg >/dev/null 2>&1 \
-            && INSTALLED_FFMPEG=true && ok "ffmpeg installed" \
-            || fail "ffmpeg install failed — try: sudo apt install ffmpeg"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq >/dev/null 2>&1 || true
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ffmpeg >/dev/null 2>&1 || true
+        if has ffmpeg; then
+            INSTALLED_FFMPEG=true; ok "ffmpeg installed"
+        else
+            fail "ffmpeg install failed — try: sudo apt install ffmpeg"
+        fi
     else
         fail "Unsupported OS: $OS — install ffmpeg manually"
     fi
@@ -76,17 +82,17 @@ else
     fi
 
     if [[ -n "$YTDLP_URL" ]]; then
-        if sudo curl -fsSL "$YTDLP_URL" -o /usr/local/bin/yt-dlp 2>/dev/null \
-            && sudo chmod +x /usr/local/bin/yt-dlp 2>/dev/null; then
-            INSTALLED_YTDLP=true
-            ok "yt-dlp installed"
+        sudo curl -fsSL "$YTDLP_URL" -o /usr/local/bin/yt-dlp >/dev/null 2>&1 || true
+        sudo chmod +x /usr/local/bin/yt-dlp >/dev/null 2>&1 || true
+        if has yt-dlp; then
+            INSTALLED_YTDLP=true; ok "yt-dlp installed"
         else
-            # Fallback: install to ~/.local/bin without sudo
+            # Fallback: no sudo, install to ~/.local/bin
             mkdir -p "$HOME/.local/bin"
-            if curl -fsSL "$YTDLP_URL" -o "$HOME/.local/bin/yt-dlp" 2>/dev/null \
-                && chmod +x "$HOME/.local/bin/yt-dlp" 2>/dev/null; then
-                INSTALLED_YTDLP=true
-                ok "yt-dlp installed (to ~/.local/bin)"
+            curl -fsSL "$YTDLP_URL" -o "$HOME/.local/bin/yt-dlp" >/dev/null 2>&1 || true
+            chmod +x "$HOME/.local/bin/yt-dlp" 2>/dev/null || true
+            if has yt-dlp; then
+                INSTALLED_YTDLP=true; ok "yt-dlp installed (to ~/.local/bin)"
             else
                 fail "yt-dlp install failed"
             fi
@@ -102,19 +108,20 @@ if has pipx; then
 else
     echo -e "  Installing pipx..."
     if [[ "$OS" == "Darwin" ]] && has brew; then
-        brew install pipx >/dev/null 2>&1 \
-            && ok "pipx installed" \
-            || fail "pipx install failed — try: brew install pipx"
+        brew install pipx >/dev/null 2>&1 || true
     elif [[ "$OS" == "Linux" ]]; then
-        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pipx >/dev/null 2>&1 \
-            || python3 -m pip install --user pipx --quiet 2>/dev/null \
-            && ok "pipx installed" \
-            || fail "pipx install failed"
+        sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq pipx >/dev/null 2>&1 || true
+        if ! has pipx; then
+            python3 -m pip install --user pipx --quiet 2>/dev/null || true
+        fi
+    fi
+    pipx ensurepath >/dev/null 2>&1 || true
+    if has pipx; then
+        ok "pipx installed"
+    else
+        fail "pipx install failed — try: brew install pipx"
     fi
 fi
-
-# Suppress pipx ensurepath noise
-pipx ensurepath >/dev/null 2>&1 || true
 
 # ── Find pipx binary ──────────────────────────────────────────────────────────
 PIPX_BIN=""
@@ -137,13 +144,19 @@ if [[ -z "$PIPX_BIN" ]]; then
 else
     echo -e "  Installing muse-cli..."
     if "$PIPX_BIN" list 2>/dev/null | grep -q "muse-cli"; then
-        "$PIPX_BIN" upgrade "git+$REPO" --quiet 2>/dev/null \
-            && ok "muse-cli updated to latest" \
-            || fail "muse-cli update failed — try: pipx upgrade git+$REPO"
+        "$PIPX_BIN" upgrade "git+$REPO" --quiet 2>/dev/null || true
+        if "$PIPX_BIN" list 2>/dev/null | grep -q "muse-cli"; then
+            ok "muse-cli updated to latest"
+        else
+            fail "muse-cli update failed — try: pipx upgrade git+$REPO"
+        fi
     else
-        "$PIPX_BIN" install "git+$REPO" --quiet 2>/dev/null \
-            && ok "muse-cli installed" \
-            || fail "muse-cli install failed — try: pipx install git+$REPO"
+        "$PIPX_BIN" install "git+$REPO" --quiet 2>/dev/null || true
+        if "$PIPX_BIN" list 2>/dev/null | grep -q "muse-cli"; then
+            ok "muse-cli installed"
+        else
+            fail "muse-cli install failed — try: pipx install git+$REPO"
+        fi
     fi
 fi
 
@@ -173,10 +186,9 @@ echo ""
 if [[ $ERRORS -eq 0 ]]; then
     echo -e "${GREEN}  ✅ Installation complete!${RESET}"
 else
-    echo -e "${YELLOW}  ⚠  Installation finished with $ERRORS error(s) — see above${RESET}"
+    echo -e "${YELLOW}  ⚠  Finished with $ERRORS error(s) — see above${RESET}"
 fi
 echo ""
 echo -e "  Restart your terminal, then run:  ${CYAN}muse-cli${RESET}"
-echo -e "${DIM}  Or without restarting:${RESET}"
-echo -e "${DIM}  source ~/.zprofile 2>/dev/null || source ~/.bashrc 2>/dev/null && muse-cli${RESET}"
+echo -e "${DIM}  Or without restarting: source ~/.zprofile 2>/dev/null || source ~/.bashrc 2>/dev/null && muse-cli${RESET}"
 echo ""
