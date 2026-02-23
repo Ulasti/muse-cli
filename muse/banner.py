@@ -17,9 +17,7 @@ BANNER_LINES = [
 ]
 
 SEPARATOR = "∙" * 60
-PROMPT_TEXT = "Type song/artist to download instantly, 'search <query>' to browse, or paste URL"
-
-
+PROMPT_TEXT = "Type song title and artist name to download instantly"
 def print_banner():
     """Display the CLI banner."""
     os.system("clear" if os.name != "nt" else "cls")
