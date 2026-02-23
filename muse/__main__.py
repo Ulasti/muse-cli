@@ -160,7 +160,11 @@ def main():
         return
 
     config = first_launch_setup()
-    check_dependencies()
+    if not config.get("deps_verified"):
+        check_dependencies()
+        config["deps_verified"] = True
+        from .config import save_config
+        save_config(config)
 
     lyrics_manager   = LyricsManager(config["genius_token"])
     duplicate_checker = DuplicateChecker(config["output_base"])

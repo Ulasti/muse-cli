@@ -4,12 +4,12 @@ import subprocess
 import re
 
 # ANSI colors
-CYAN  = "\033[36m"
-WHITE = "\033[97m"
-GREEN = "\033[32m"
+CYAN   = "\033[36m"
+WHITE  = "\033[97m"
+GREEN  = "\033[32m"
 YELLOW = "\033[33m"
-RED   = "\033[31m"
-RESET = "\033[0m"
+RED    = "\033[31m"
+RESET  = "\033[0m"
 
 
 def check_dependencies():
@@ -30,29 +30,25 @@ def check_dependencies():
         except (subprocess.CalledProcessError, FileNotFoundError):
             if tool == "ffmpeg":
                 common_locations = [
-                    "/usr/bin/ffmpeg",           # Linux / Pi OS
-                    "/usr/local/bin/ffmpeg",     # Linux alt
-                    "/opt/homebrew/bin/ffmpeg",  # macOS Apple Silicon
-                    "/opt/local/bin/ffmpeg",     # macOS MacPorts
+                    "/usr/bin/ffmpeg",
+                    "/usr/local/bin/ffmpeg",
+                    "/opt/homebrew/bin/ffmpeg",
+                    "/opt/local/bin/ffmpeg",
                 ]
-                for location in common_locations:
-                    if os.path.exists(location) and os.access(location, os.X_OK):
-                        os.environ["PATH"] = f"{os.path.dirname(location)}:{os.environ.get('PATH', '')}"
-                        found = True
-                        print(f"{GREEN}✓ Found {tool} at {location}{RESET}")
-                        break
             elif tool == "yt-dlp":
-                ytdlp_locations = [
+                common_locations = [
                     "/usr/local/bin/yt-dlp",
                     "/usr/bin/yt-dlp",
                     os.path.expanduser("~/.local/bin/yt-dlp"),
                 ]
-                for location in ytdlp_locations:
-                    if os.path.exists(location) and os.access(location, os.X_OK):
-                        os.environ["PATH"] = f"{os.path.dirname(location)}:{os.environ.get('PATH', '')}"
-                        found = True
-                        print(f"{GREEN}✓ Found {tool} at {location}{RESET}")
-                        break
+            else:
+                common_locations = []
+
+            for location in common_locations:
+                if os.path.exists(location) and os.access(location, os.X_OK):
+                    os.environ["PATH"] = f"{os.path.dirname(location)}:{os.environ.get('PATH', '')}"
+                    found = True
+                    break
 
         if not found:
             missing.append(tool)
@@ -71,8 +67,8 @@ def check_dependencies():
             install_system_dependencies(missing)
         else:
             sys.exit(1)
-    else:
-        print(f"{GREEN}✓ All system dependencies found{RESET}")
+
+    return len(missing) == 0
 
 
 def install_system_dependencies(tools):
