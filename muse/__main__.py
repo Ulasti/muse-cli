@@ -1,5 +1,6 @@
 import sys
 import os
+import platform
 
 from .config import first_launch_setup, get_config, interactive_config
 from .utils import check_dependencies
@@ -20,15 +21,29 @@ YELLOW = "\033[33m"
 
 def _handle_uninstall():
     import shutil
+    import subprocess
+    import platform
+
+    WHITE  = "\033[97m"
+    GREEN  = "\033[32m"
+    RED    = "\033[31m"
+    YELLOW = "\033[33m"
+    CYAN   = "\033[36m"
+    RESET  = "\033[0m"
+
     print(f"\n{WHITE}🗑️  muse-cli uninstaller{RESET}\n")
 
-    # Music library
+    # ── Load config for provenance + music dir ────────────────────────────────
     try:
         config = get_config()
-        music_dir = config.get("output_base", "")
     except Exception:
-        music_dir = ""
+        config = {}
 
+    music_dir             = config.get("output_base", "")
+    script_installed_ffmpeg = config.get("script_installed_ffmpeg", False)
+    script_installed_ytdlp  = config.get("script_installed_ytdlp",  False)
+
+    # ── Music library ─────────────────────────────────────────────────────────
     if music_dir and os.path.exists(music_dir):
         print(f"   Music library: {music_dir}")
         keep = input(f"{YELLOW}   Keep your downloaded music? (Y/n): {RESET}").strip().lower()
@@ -37,43 +52,72 @@ def _handle_uninstall():
                 shutil.rmtree(music_dir)
                 print(f"{GREEN}   ✅ Music library removed{RESET}")
             except Exception as e:
-                print(f"{RED}   ❌ {e}{RESET}")
+                print(f"{RED}   ❌ Could not remove music library: {e}{RESET}")
 
-    # Config
+    # ── Config ────────────────────────────────────────────────────────────────
     config_dir = os.path.expanduser("~/.config/muse-cli")
     if os.path.exists(config_dir):
-        choice = input(f"{YELLOW}Remove config (~/.config/muse-cli)? (y/N): {RESET}").strip().lower()
+        choice = input(f"{YELLOW}   Remove config (~/.config/muse-cli)? (y/N): {RESET}").strip().lower()
         if choice == 'y':
             try:
                 shutil.rmtree(config_dir)
                 print(f"{GREEN}   ✅ Config removed{RESET}")
             except Exception as e:
-                print(f"{RED}   ❌ {e}{RESET}")
+                print(f"{RED}   ❌ Could not remove config: {e}{RESET}")
 
-    # ffmpeg
+    # ── yt-dlp ────────────────────────────────────────────────────────────────
+    ytdlp_path = shutil.which("yt-dlp")
+    if ytdlp_path:
+        if script_installed_ytdlp:
+            choice = input(f"{YELLOW}   Remove yt-dlp (installed by muse-cli)? (y/N): {RESET}").strip().lower()
+            if choice == 'y':
+                try:
+                    os.remove(ytdlp_path)
+                    print(f"{GREEN}   ✅ yt-dlp removed{RESET}")
+                except Exception as e:
+                    print(f"{RED}   ❌ Could not remove yt-dlp: {e}{RESET}")
+                    print(f"{YELLOW}   Try manually: sudo rm {ytdlp_path}{RESET}")
+        else:
+            print(f"   yt-dlp was not installed by muse-cli — skipping")
+
+    # ── ffmpeg ────────────────────────────────────────────────────────────────
     ffmpeg_path = shutil.which("ffmpeg")
     if ffmpeg_path:
-        choice = input(f"{YELLOW}Remove ffmpeg? (y/N): {RESET}").strip().lower()
-        if choice == 'y':
-            try:
-                result = subprocess.run(["brew", "list", "ffmpeg"], capture_output=True)
-                if result.returncode == 0:
-                    subprocess.run(["brew", "uninstall", "ffmpeg"], check=True)
-                    print(f"{GREEN}   ✅ ffmpeg removed{RESET}")
-                else:
-                    print(f"{YELLOW}   Not installed via Homebrew, remove manually: {ffmpeg_path}{RESET}")
-            except Exception as e:
-                print(f"{RED}   ❌ {e}{RESET}")
+        if script_installed_ffmpeg:
+            choice = input(f"{YELLOW}   Remove ffmpeg (installed by muse-cli)? (y/N): {RESET}").strip().lower()
+            if choice == 'y':
+                try:
+                    if platform.system() == "Darwin":
+                        result = subprocess.run(
+                            ["brew", "list", "ffmpeg"],
+                            capture_output=True
+                        )
+                        if result.returncode == 0:
+                            subprocess.run(["brew", "uninstall", "ffmpeg"], check=True)
+                            print(f"{GREEN}   ✅ ffmpeg removed{RESET}")
+                        else:
+                            print(f"{YELLOW}   ffmpeg not managed by Homebrew.{RESET}")
+                            print(f"{YELLOW}   Remove manually: sudo rm {ffmpeg_path}{RESET}")
+                    else:
+                        subprocess.run(
+                            ["sudo", "apt-get", "remove", "-y", "ffmpeg"],
+                            check=True
+                        )
+                        print(f"{GREEN}   ✅ ffmpeg removed{RESET}")
+                except Exception as e:
+                    print(f"{RED}   ❌ Could not remove ffmpeg: {e}{RESET}")
+        else:
+            print(f"   ffmpeg was not installed by muse-cli — skipping")
 
-    # muse-cli itself
-    print(f"\n{CYAN}Removing muse-cli...{RESET}")
+    # ── muse-cli itself ───────────────────────────────────────────────────────
+    print(f"\n{CYAN}   Removing muse-cli...{RESET}")
     try:
-        import subprocess
         subprocess.run(["pipx", "uninstall", "muse-cli"], check=True)
         print(f"{GREEN}✅ Done. Goodbye!{RESET}\n")
     except Exception as e:
         print(f"{RED}❌ {e}{RESET}")
-        print(f"{YELLOW}Try manually: pipx uninstall muse-cli{RESET}\n")
+        print(f"{YELLOW}   Try manually: pipx uninstall muse-cli{RESET}\n")
+
 
 
 def main():
