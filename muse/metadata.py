@@ -9,6 +9,8 @@ _PREFERRED_TYPES = ["Album", "Single", "EP"]
 _REJECTED_TYPES  = ["Spokenword", "Broadcast", "DJ Mix", "Compilation", "Interview"]
 
 
+
+
 def _normalize(text: str) -> str:
     text = text.lower()
     text = re.sub(r'[^\w\s]', '', text)
@@ -61,9 +63,16 @@ def lookup_metadata(artist: str, title: str) -> dict:
             'muse-cli', '1.0', 'https://github.com/Ulasti/muse-cli'
         )
 
-        result = musicbrainzngs.search_recordings(
-            artist=artist, recording=title, limit=5
-        )
+        if is_cover:
+            # Title only, take most popular result
+            result = musicbrainzngs.search_recordings(
+                recording=title, limit=1
+            )
+        else:
+            result = musicbrainzngs.search_recordings(
+                artist=artist, recording=title, limit=5
+            )
+            
         recordings = result.get('recording-list', [])
 
         for recording in recordings:
