@@ -7,7 +7,7 @@ import platform
 
 from .config import first_launch_setup, get_config, interactive_config, CONFIG_DIR
 from .utils import check_dependencies
-from .banner import print_banner, STATUS_ROW, PROMPT_TEXT
+from .banner import print_banner, STATUS_ROW, BANNER_HEIGHT
 from .search import search_youtube, display_search_results
 from .downloader import download_song
 from .duplicate import DuplicateChecker
@@ -17,21 +17,57 @@ from .colors import CYAN, WHITE, GREEN, RED, RESET, YELLOW, DIM
 
 # ── Compact single-line output helpers ────────────────────────────────────────
 
+# Tracks how many lines the main thread has printed below the banner.
+# When this approaches the terminal height the banner is about to scroll
+# off-screen, so we redraw it.
+_lines_below_banner = 0
+
+
 def _compact_line(text):
     """Overwrite the banner status line (row 9) using absolute positioning.
 
-    The banner is pinned above a scroll region, so this never disturbs
-    the >>> prompt or anything the user is typing.
+    Uses DECSC / DECRC (ESC 7 / ESC 8) for save-restore — more reliable
+    across terminals than the SCO sequences (CSI s / CSI u).
     """
     cols = shutil.get_terminal_size((80, 24)).columns
     truncated = text[:cols - 1] if len(text) >= cols else text
     padding = " " * max(0, cols - len(truncated) - 1)
-    # \033[s          = save cursor position (inside scroll region)
-    # \033[<row>;1H   = jump to STATUS_ROW column 1 (the pinned banner area)
-    # <text+padding>  = overwrite the status line
-    # \033[u          = restore cursor (back to >>> prompt in scroll region)
-    sys.stdout.write(f"\033[s\033[{STATUS_ROW};1H{truncated}{padding}\033[u")
+    sys.stdout.write(f"\0337\033[{STATUS_ROW};1H{truncated}{padding}\0338")
     sys.stdout.flush()
+
+
+def _read_input(prompt):
+    """Show prompt and read a line from stdin (no readline, no cursor conflicts)."""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    try:
+        line = sys.stdin.readline()
+        if not line:          # EOF
+            return None
+        return line.strip()
+    except KeyboardInterrupt:
+        raise
+
+
+def _maybe_redraw_banner(stats):
+    """Redraw the banner if it's about to scroll off-screen."""
+    global _lines_below_banner
+    rows = shutil.get_terminal_size((80, 24)).lines
+    # Redraw when the output area is nearly full
+    if _lines_below_banner >= rows - BANNER_HEIGHT - 2:
+        print_banner()
+        # Update status line with current progress if available
+        current = stats.get("current_status")
+        if current:
+            _compact_line(current)
+        _lines_below_banner = 0
+
+
+def _tracked_print(*args, **kwargs):
+    """print() wrapper that counts lines for banner-redraw tracking."""
+    global _lines_below_banner
+    print(*args, **kwargs)
+    _lines_below_banner += 1
 
 
 def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
@@ -51,7 +87,9 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
                     "done": "✅", "skip": "⏭️ ", "error": "❌"}.get(stage, "⏳")
             pending = q.qsize()
             suffix = f"  [{pending} pending]" if pending > 0 else ""
-            _compact_line(f"{icon} {detail}{suffix}")
+            line = f"{icon} {detail}{suffix}"
+            stats["current_status"] = line
+            _compact_line(line)
 
         try:
             if entry.startswith(("http://", "https://", "www.")):
@@ -98,7 +136,9 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
         # If queue is empty, show session summary on the status line
         if q.empty():
             n = stats["completed"]
-            _compact_line(f"✅ {n} song{'s' if n != 1 else ''} downloaded this session")
+            line = f"✅ {n} song{'s' if n != 1 else ''} downloaded this session"
+            stats["current_status"] = line
+            _compact_line(line)
 
 
 # ── Batch mode (--batch flag) — unchanged ─────────────────────────────────────
@@ -384,9 +424,11 @@ def main():
         return
 
     # ── Interactive queue mode ────────────────────────────────────────────
+    global _lines_below_banner
     print_banner()
+    _lines_below_banner = 0
 
-    stats = {"completed": 0}
+    stats = {"completed": 0, "current_status": None}
     q = queue.Queue()
 
     worker = threading.Thread(
@@ -398,13 +440,13 @@ def main():
 
     try:
         while True:
-            try:
-                user_input = input(f"{CYAN}>>> {RESET}").strip()
-            except EOFError:
-                sys.stdout.write("\033[r")
-                sys.stdout.flush()
-                break
+            _maybe_redraw_banner(stats)
 
+            user_input = _read_input(f"{CYAN}>>> {RESET}")
+            _lines_below_banner += 1  # the prompt + typed text counts as a line
+
+            if user_input is None:   # EOF
+                break
             if not user_input:
                 continue
 
@@ -412,7 +454,7 @@ def main():
             if user_input.lower() == "batch":
                 entries = _collect_batch_entries()
                 _process_batch(entries, config, duplicate_checker, lyrics_manager)
-                print()
+                _tracked_print()
                 continue
 
             # ── Search mode (synchronous — user picks) ────────────────────
@@ -421,15 +463,17 @@ def main():
                 if not query:
                     continue
 
-                print(f"{CYAN}🔍 Searching YouTube for: {query}{RESET}")
+                _tracked_print(f"{CYAN}🔍 Searching YouTube for: {query}{RESET}")
                 results = search_youtube(query, max_results=5)
 
                 if results:
                     display_search_results(results)
+                    _lines_below_banner += len(results) * 3 + 4  # rough line count
 
                     while True:
                         try:
-                            choice = input(f"\n{WHITE}Enter number to download (or press Enter to cancel): {RESET}").strip()
+                            choice = _read_input(f"\n{WHITE}Enter number to download (or press Enter to cancel): {RESET}")
+                            _lines_below_banner += 2
 
                             if not choice:
                                 break
@@ -439,16 +483,16 @@ def main():
                                 selected = results[idx - 1]
                                 q.put({"entry": selected["url"], "user_query": query})
                                 pending = q.qsize()
-                                print(f"⏳ Queued: {selected['title']} [{pending} pending]")
+                                _tracked_print(f"⏳ Queued: {selected['title']} [{pending} pending]")
                                 break
                             else:
-                                print(f"{RED}Invalid number{RESET}")
+                                _tracked_print(f"{RED}Invalid number{RESET}")
                         except ValueError:
-                            print(f"{RED}Please enter a valid number{RESET}")
+                            _tracked_print(f"{RED}Please enter a valid number{RESET}")
                         except KeyboardInterrupt:
                             break
                 else:
-                    print(f"{RED}No results found{RESET}")
+                    _tracked_print(f"{RED}No results found{RESET}")
 
                 continue
 
@@ -463,11 +507,11 @@ def main():
                             q.put({"entry": fl, "user_query": fl})
                         fname = os.path.basename(candidate)
                         pending = q.qsize()
-                        print(f"📦 Loaded {len(file_lines)} songs from {fname} [{pending} pending]")
+                        _tracked_print(f"📦 Loaded {len(file_lines)} songs from {fname} [{pending} pending]")
                     else:
-                        print(f"{YELLOW}File is empty{RESET}")
+                        _tracked_print(f"{YELLOW}File is empty{RESET}")
                 except Exception as e:
-                    print(f"{RED}❌ Could not read file: {e}{RESET}")
+                    _tracked_print(f"{RED}❌ Could not read file: {e}{RESET}")
                 continue
 
             # ── URL or song name → queue ──────────────────────────────────
@@ -478,24 +522,19 @@ def main():
 
             q.put({"entry": entry, "user_query": user_query})
             pending = q.qsize()
-            print(f"⏳ Queued: {entry} [{pending} pending]")
+            _tracked_print(f"⏳ Queued: {entry} [{pending} pending]")
 
     except KeyboardInterrupt:
         if not q.empty():
             print(f"\n{YELLOW}Finishing current download...{RESET}")
-            # Drain remaining items so worker can finish current
             while not q.empty():
                 try:
                     q.get_nowait()
                     q.task_done()
                 except queue.Empty:
                     break
-            # Wait for current download to finish (with timeout)
             q.join()
 
-        # Reset scroll region so the terminal is normal after exit
-        sys.stdout.write("\033[r")
-        sys.stdout.flush()
         print(f"\n{CYAN}Exiting MUSE-CLI. Goodbye!{RESET}")
         sys.exit(0)
 
