@@ -1,6 +1,6 @@
 # muse-cli
 
-A command-line tool that downloads music from YouTube and automatically tags it with metadata from MusicBrainz and lyrics from Genius.
+A command-line tool that downloads music from the Internet and automatically tags it with metadata from MusicBrainz and lyrics from Genius.
 
 Type a song name, get a properly tagged audio file. That's it.
 
@@ -31,7 +31,7 @@ After installing, restart your terminal and run `muse-cli`.
 
 ```bash
 muse-cli                              # launch interactive mode
-muse-cli bohemian rhapsody queen      # download top result and exit
+muse-cli artist, song title.          # download top result and exit
 muse-cli https://youtube.com/watch?v=... # download from URL and exit
 ```
 
@@ -41,13 +41,13 @@ Once inside the interactive prompt (`>>>`):
 
 | Input | What happens |
 |---|---|
-| `bohemian rhapsody` | Downloads the top YouTube result |
-| `search bohemian rhapsody` | Shows 5 results to pick from |
-| `https://youtube.com/watch?v=...` | Downloads directly from URL |
+| `artist, song title` | Downloads the best match from the internet |
+| `search artist, song title` | Shows 5 results to pick from |
+| `https://example.com/watch?v=...` | Downloads directly from URL |
 
 ### What muse-cli does for each download
 
-1. Searches YouTube (or takes your URL)
+1. Searches the Internet (or takes your URL)
 2. Downloads audio via yt-dlp (M4A or MP3)
 3. Looks up metadata on MusicBrainz (artist, album, year)
 4. Fetches and embeds lyrics from Genius
