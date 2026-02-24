@@ -2,21 +2,14 @@ import sys
 import os
 import platform
 
-from .config import first_launch_setup, get_config, interactive_config
+from .config import first_launch_setup, get_config, interactive_config, CONFIG_DIR
 from .utils import check_dependencies
 from .banner import print_banner
 from .search import search_youtube, display_search_results
 from .downloader import download_song
 from .duplicate import DuplicateChecker
 from .lyrics import LyricsManager
-
-# ANSI colors
-CYAN = "\033[36m"
-WHITE = "\033[97m"
-GREEN = "\033[32m"
-RED = "\033[31m"
-RESET = "\033[0m"
-YELLOW = "\033[33m"
+from .colors import CYAN, WHITE, GREEN, RED, RESET, YELLOW
 
 
 def _handle_uninstall():
@@ -167,7 +160,7 @@ def main():
         save_config(config)
 
     lyrics_manager   = LyricsManager(config["genius_token"])
-    duplicate_checker = DuplicateChecker(config["output_base"])
+    duplicate_checker = DuplicateChecker(CONFIG_DIR, output_base=config["output_base"])
 
     try:
         os.makedirs(config["output_base"], exist_ok=True)

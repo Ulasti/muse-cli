@@ -4,13 +4,7 @@ import re
 from mutagen.easyid3 import EasyID3
 from mutagen.mp4 import MP4
 
-# ANSI colors
-CYAN   = "\033[36m"
-GREEN  = "\033[32m"
-YELLOW = "\033[33m"
-RED    = "\033[31m"
-DIM    = "\033[2m"
-RESET  = "\033[0m"
+from .colors import CYAN, GREEN, YELLOW, RED, DIM, RESET
 
 BAR_LENGTH = 40
 
@@ -147,14 +141,16 @@ def download_with_progress(url: str, output_template: str, audio_format: str) ->
         raise Exception(f"[E03] Download failed: {e}")
 
 
-def find_latest_audio(base_path: str, audio_format: str) -> str:
+def find_latest_audio(artist_dir: str, audio_format: str) -> str:
     ext = f".{audio_format}"
     audio_files = []
-    for root, _, files in os.walk(base_path):
-        for f in files:
-            if f.endswith(ext):
-                fp = os.path.join(root, f)
+    try:
+        for name in os.listdir(artist_dir):
+            if name.endswith(ext):
+                fp = os.path.join(artist_dir, name)
                 audio_files.append((fp, os.path.getctime(fp)))
+    except OSError:
+        pass
     if not audio_files:
         raise Exception(f"[E04] No {ext} file found — is ffmpeg installed?")
     return max(audio_files, key=lambda x: x[1])[0]

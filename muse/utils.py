@@ -1,15 +1,8 @@
 import os
 import sys
 import subprocess
-import re
 
-# ANSI colors
-CYAN   = "\033[36m"
-WHITE  = "\033[97m"
-GREEN  = "\033[32m"
-YELLOW = "\033[33m"
-RED    = "\033[31m"
-RESET  = "\033[0m"
+from .colors import CYAN, WHITE, GREEN, YELLOW, RED, RESET
 
 
 def check_dependencies():
@@ -92,15 +85,3 @@ def install_system_dependencies(tools):
                 print(f"  sudo apt install ffmpeg")
             print(f"{YELLOW}Please install it and restart muse-cli{RESET}")
             sys.exit(1)
-
-
-def clean_title(title: str) -> str:
-    """Clean title for lyrics search."""
-    title = re.sub(r"\(.*?\)", "", title)
-    title = re.split(r"[｜|]", title)[0]
-    return title.strip()
-
-
-def clean_filename(name: str) -> str:
-    """Remove invalid file/folder characters."""
-    return re.sub(r'[\/\\\:\*\?\"\<\>\|]', '', name).strip()

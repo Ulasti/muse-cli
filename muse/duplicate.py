@@ -1,17 +1,27 @@
 import os
 import hashlib
+import shutil
 
-# ANSI colors
-GREEN  = "\033[32m"
-YELLOW = "\033[33m"
-CYAN   = "\033[36m"
-RED    = "\033[31m"
-RESET  = "\033[0m"
+from .colors import GREEN, YELLOW, CYAN, RED, RESET
 
 
 class DuplicateChecker:
-    def __init__(self, output_base):
-        self.hash_db_file = os.path.join(output_base, ".muse_hashes.txt")
+    def __init__(self, config_dir, output_base=None):
+        os.makedirs(config_dir, exist_ok=True)
+        self.hash_db_file = os.path.join(config_dir, "hashes.txt")
+
+        # Migrate old hash DB from music folder if it exists
+        if output_base:
+            old_db = os.path.join(output_base, ".muse_hashes.txt")
+            if os.path.exists(old_db) and not os.path.exists(self.hash_db_file):
+                shutil.move(old_db, self.hash_db_file)
+            elif os.path.exists(old_db) and os.path.exists(self.hash_db_file):
+                # Merge old entries into new file, then remove old
+                with open(old_db, "r") as f:
+                    old_lines = f.readlines()
+                with open(self.hash_db_file, "a") as f:
+                    f.writelines(old_lines)
+                os.remove(old_db)
 
     # ── Hashing ──────────────────────────────────────────────────────────────
 

@@ -1,13 +1,7 @@
 import subprocess
 import re
 
-# ANSI colors
-CYAN = "\033[36m"
-WHITE = "\033[97m"
-GREEN = "\033[32m"
-YELLOW = "\033[33m"
-RED = "\033[31m"
-RESET = "\033[0m"
+from .colors import CYAN, WHITE, GREEN, YELLOW, RED, RESET
 
 _DELIM = "|||"
 

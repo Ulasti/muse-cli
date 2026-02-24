@@ -2,13 +2,7 @@ from mutagen.id3 import ID3, USLT
 from mutagen.mp4 import MP4
 import re
 
-# ANSI colors
-GREEN  = "\033[32m"
-YELLOW = "\033[33m"
-CYAN   = "\033[36m"
-DIM    = "\033[2m"
-RED    = "\033[31m"
-RESET  = "\033[0m"
+from .colors import GREEN, YELLOW, CYAN, DIM, RED, RESET
 
 
 def _clean_for_search(text: str) -> str:

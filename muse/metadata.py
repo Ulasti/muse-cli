@@ -1,9 +1,7 @@
 import re
 import time
 
-# ANSI colors
-DIM   = "\033[2m"
-RESET = "\033[0m"
+from .colors import DIM, RESET
 
 _PREFERRED_TYPES = ["Album", "Single", "EP"]
 _REJECTED_TYPES  = ["Spokenword", "Broadcast", "DJ Mix", "Compilation", "Interview", "Live", "Remix",]
