@@ -9,7 +9,88 @@ from .search import search_youtube, display_search_results
 from .downloader import download_song
 from .duplicate import DuplicateChecker
 from .lyrics import LyricsManager
-from .colors import CYAN, WHITE, GREEN, RED, RESET, YELLOW
+from .colors import CYAN, WHITE, GREEN, RED, RESET, YELLOW, DIM
+
+
+def _collect_batch_entries() -> list[str]:
+    """Prompt user to enter songs one per line. Returns list of entries."""
+    print(f"\n{CYAN}📦 Batch mode — enter songs, URLs, or drag a .txt file (empty line to start){RESET}")
+    entries = []
+    counter = 1
+    try:
+        while True:
+            line = input(f" {DIM}{counter}:{RESET} ").strip()
+            if not line:
+                break
+
+            # Detect .txt file path — expand its contents
+            candidate = line.strip("'\"")  # strip quotes from drag-and-drop
+            if candidate.endswith('.txt') and os.path.isfile(candidate):
+                try:
+                    with open(candidate, 'r') as f:
+                        file_lines = [l.strip() for l in f if l.strip()]
+                    if file_lines:
+                        for i, fl in enumerate(file_lines):
+                            prefix = "├─" if i < len(file_lines) - 1 else "└─"
+                            print(f"    {DIM}{prefix} {fl}{RESET}")
+                            entries.append(fl)
+                        counter += 1
+                        continue
+                except Exception as e:
+                    print(f"    {YELLOW}⚠  Could not read file: {e}{RESET}")
+
+            entries.append(line)
+            counter += 1
+    except (KeyboardInterrupt, EOFError):
+        print()
+
+    return entries
+
+
+def _process_batch(entries: list[str], config, duplicate_checker, lyrics_manager):
+    """Process a list of batch entries sequentially."""
+    if not entries:
+        print(f"{YELLOW}No entries to process.{RESET}")
+        return
+
+    print(f"\n{CYAN}Processing {len(entries)} songs...{RESET}\n")
+
+    for i, entry in enumerate(entries, 1):
+        print(f"{CYAN}[{i}/{len(entries)}]{RESET} {entry}")
+
+        if entry.startswith(("http://", "https://", "www.")):
+            url = entry
+            if url.startswith("www."):
+                url = "https://" + url
+            download_song(
+                url,
+                config["output_base"],
+                duplicate_checker,
+                lyrics_manager,
+                user_query="",
+                audio_format=config["audio_format"],
+                batch_mode=True,
+            )
+        else:
+            results = search_youtube(entry, max_results=1)
+            if results:
+                top = results[0]
+                print(f"{GREEN}Found:{RESET} {top['title']}  {CYAN}by{RESET} {top['uploader']}")
+                download_song(
+                    top['url'],
+                    config["output_base"],
+                    duplicate_checker,
+                    lyrics_manager,
+                    user_query=entry,
+                    audio_format=config["audio_format"],
+                    batch_mode=True,
+                )
+            else:
+                print(f"{RED}No results found{RESET}")
+
+        print()
+
+    print(f"{GREEN}✅ Batch complete — processed {len(entries)} songs{RESET}")
 
 
 def _handle_uninstall():
@@ -152,6 +233,8 @@ def main():
         interactive_config()
         return
 
+    is_batch = len(sys.argv) > 1 and sys.argv[1] == "--batch"
+
     config = first_launch_setup()
     if not config.get("deps_verified"):
         check_dependencies()
@@ -167,6 +250,12 @@ def main():
     except Exception as e:
         print(f"{RED}❌ Failed to create output directory: {e}{RESET}")
         sys.exit(1)
+
+    # ── Batch mode (--batch flag) ────────────────────────────────────────
+    if is_batch:
+        entries = _collect_batch_entries()
+        _process_batch(entries, config, duplicate_checker, lyrics_manager)
+        return
 
     # Non-interactive single-run mode: if arguments are provided (and
     # not one of the special flags handled above), treat them as a
@@ -214,6 +303,13 @@ def main():
             user_input = input(f"{CYAN}>>> {RESET}").strip()
 
             if not user_input:
+                continue
+
+            # ── Batch mode ─────────────────────────────────────────────────
+            if user_input.lower() == "batch":
+                entries = _collect_batch_entries()
+                _process_batch(entries, config, duplicate_checker, lyrics_manager)
+                print()
                 continue
 
             # ── Search mode ──────────────────────────────────────────────────

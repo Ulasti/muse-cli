@@ -9,6 +9,7 @@ class DuplicateChecker:
     def __init__(self, config_dir, output_base=None):
         os.makedirs(config_dir, exist_ok=True)
         self.hash_db_file = os.path.join(config_dir, "hashes.txt")
+        self._db = None  # lazy-loaded in-memory cache
 
         # Migrate old hash DB from music folder if it exists
         if output_base:
@@ -43,9 +44,14 @@ class DuplicateChecker:
         """
         Returns a dict of:
           { "hash:<sha256>": filepath, "id:<youtube_id>": filepath }
+        Uses in-memory cache after first load.
         """
+        if self._db is not None:
+            return self._db
+
         if not os.path.exists(self.hash_db_file):
-            return {}
+            self._db = {}
+            return self._db
 
         db = {}
         try:
@@ -61,19 +67,32 @@ class DuplicateChecker:
         except Exception as e:
             print(f"{YELLOW}⚠️  Error loading hash database: {e}{RESET}")
 
-        return db
+        self._db = db
+        return self._db
 
     def _save_entry(self, kind: str, key: str, filepath: str):
-        """Append a single entry to the database file."""
+        """Append a single entry to the database file and update cache."""
         try:
             os.makedirs(os.path.dirname(self.hash_db_file) or ".", exist_ok=True)
             with open(self.hash_db_file, "a") as f:
                 f.write(f"{kind}:{key}:{filepath}\n")
         except Exception as e:
             print(f"{YELLOW}⚠️  Error saving to hash database: {e}{RESET}")
+        # Update in-memory cache
+        if self._db is not None:
+            self._db[f"{kind}:{key}"] = filepath
 
     def remove_entries(self, video_id: str, filepath: str):
         """Remove all entries matching this video ID or filepath from the database."""
+        # Update in-memory cache
+        if self._db is not None:
+            keys_to_remove = [
+                k for k, v in self._db.items()
+                if k == f"id:{video_id}" or v == filepath
+            ]
+            for k in keys_to_remove:
+                del self._db[k]
+
         if not os.path.exists(self.hash_db_file):
             return
         try:

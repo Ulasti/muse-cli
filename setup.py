@@ -26,6 +26,7 @@ setup(
         "mutagen>=1.47.0",
         "lyricsgenius>=3.0.1",
         "musicbrainzngs>=0.7.1",
+        "Pillow>=9.0.0",
     ],
     entry_points={
         "console_scripts": [

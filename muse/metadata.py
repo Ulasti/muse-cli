@@ -6,6 +6,8 @@ from .colors import DIM, RESET
 _SECONDARY_REJECT = {"Live", "Compilation", "Remix", "DJ-mix", "Mixtape/Street",
                       "Demo", "Soundtrack", "Spokenword", "Interview", "Audiobook"}
 
+_last_request_time = 0.0
+
 
 def _normalize(text: str) -> str:
     text = text.lower()
@@ -145,7 +147,10 @@ def lookup_metadata(artist: str, title: str, is_cover: bool = False) -> dict:
         musicbrainzngs.set_useragent(
             'muse-cli', '1.0', 'https://github.com/Ulasti/muse-cli'
         )
-        time.sleep(1)
+        global _last_request_time
+        elapsed = time.monotonic() - _last_request_time
+        if elapsed < 1.0:
+            time.sleep(1.0 - elapsed)
 
         for attempt in range(2):
             try:
@@ -157,6 +162,7 @@ def lookup_metadata(artist: str, title: str, is_cover: bool = False) -> dict:
                     result = musicbrainzngs.search_recordings(
                         artist=artist, recording=title, limit=50
                     )
+                _last_request_time = time.monotonic()
                 break
             except Exception:
                 if attempt == 0:

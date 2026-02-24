@@ -1,6 +1,8 @@
 import os
 import subprocess
 import re
+import glob as glob_mod
+from concurrent.futures import ThreadPoolExecutor
 from mutagen.easyid3 import EasyID3
 from mutagen.mp4 import MP4
 
@@ -101,6 +103,7 @@ def download_with_progress(url: str, output_template: str, audio_format: str) ->
         "--audio-format", audio_format,
         "--audio-quality", "0",
         "--embed-thumbnail",
+        "--write-thumbnail",
         "--add-metadata",
         "--newline", "--progress",
         "--progress-template", "download:%(progress.percentage)s",
@@ -196,12 +199,80 @@ def _add_to_apple_music(filepath: str):
         pass
 
 
+def _squarify_thumbnail(audio_path: str, artist_dir: str, audio_format: str):
+    """Find the thumbnail file, center-crop to square, re-embed into audio."""
+    try:
+        from PIL import Image
+        import io
+    except ImportError:
+        return  # Pillow not installed, skip silently
+
+    # Find thumbnail file written by yt-dlp
+    thumb_path = None
+    for ext in ('*.webp', '*.jpg', '*.jpeg', '*.png'):
+        matches = glob_mod.glob(os.path.join(artist_dir, ext))
+        if matches:
+            # Pick the most recently created one
+            thumb_path = max(matches, key=os.path.getctime)
+            break
+
+    if not thumb_path:
+        return
+
+    try:
+        img = Image.open(thumb_path)
+        w, h = img.size
+        if w == h:
+            # Already square, clean up and return
+            os.remove(thumb_path)
+            return
+
+        # Center-crop to square
+        size = min(w, h)
+        left = (w - size) // 2
+        top = (h - size) // 2
+        img = img.crop((left, top, left + size, top + size))
+
+        # Convert to JPEG bytes
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=92)
+        cover_data = buf.getvalue()
+
+        # Re-embed using mutagen
+        if audio_format == "mp3":
+            from mutagen.id3 import ID3, APIC
+            id3 = ID3(audio_path)
+            # Remove existing cover art
+            id3.delall("APIC")
+            id3.add(APIC(
+                encoding=3, mime="image/jpeg", type=3,
+                desc="Cover", data=cover_data
+            ))
+            id3.save()
+        else:
+            audio = MP4(audio_path)
+            from mutagen.mp4 import MP4Cover
+            audio["covr"] = [MP4Cover(cover_data, imageformat=MP4Cover.FORMAT_JPEG)]
+            audio.save()
+
+    except Exception as e:
+        print(f"{YELLOW}⚠  Could not squarify thumbnail: {e}{RESET}")
+    finally:
+        # Clean up thumbnail file
+        try:
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
+        except Exception:
+            pass
+
+
 def _sanitize_path_component(name: str) -> str:
     return re.sub(r'[\/\\\:\*\?\"\<\>\|]', '', name).strip() or "Unknown"
 
 
 def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
-                  user_query: str = "", audio_format: str = "m4a"):
+                  user_query: str = "", audio_format: str = "m4a",
+                  batch_mode: bool = False):
     try:
         if not url.startswith(("http://", "https://")):
             print(f"{RED}❌ Invalid URL{RESET}")
@@ -216,6 +287,9 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         is_dup, existing_file = duplicate_checker.is_duplicate_by_id(video_id)
         if is_dup:
             print(f"{YELLOW}⚠  Already in library: {existing_file}{RESET}")
+            if batch_mode:
+                print(f"{DIM}   Skipped (batch mode).{RESET}")
+                return
             try:
                 choice = input(f"{YELLOW}   Overwrite? (y/N): {RESET}").strip().lower()
             except (KeyboardInterrupt, EOFError):
@@ -248,7 +322,7 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         else:
             print(f"   {DIM}Metadata not found on MusicBrainz{RESET}          ")
 
-        # ── Download ─────────────────────────────────────────────────────────
+        # ── Prepare output path ──────────────────────────────────────────────
         safe_artist = _sanitize_path_component(final_artist)
         safe_title  = _sanitize_path_component(final_title)
         safe_album  = _sanitize_path_component(album) if album else "Unknown Album"
@@ -257,8 +331,16 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         os.makedirs(artist_dir, exist_ok=True)
         output_template = os.path.join(artist_dir, f"{safe_title}.%(ext)s")
 
+        # ── Start lyrics fetch in background, download in foreground ─────────
         print(f"{DIM}   Downloading...{RESET}")
-        downloaded_file = download_with_progress(url, output_template, audio_format)
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            lyrics_future = executor.submit(
+                lyrics_manager.fetch_lyrics,
+                final_title, final_artist,
+                user_query=user_query, is_cover=is_cover
+            )
+
+            downloaded_file = download_with_progress(url, output_template, audio_format)
 
         desired_path = os.path.join(artist_dir, f"{safe_title}.{audio_format}")
         if downloaded_file != desired_path and os.path.exists(downloaded_file):
@@ -275,13 +357,16 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
                 pass
             return
 
-        # ── Lyrics ───────────────────────────────────────────────────────────
-        print(f"{DIM}   Fetching lyrics...{RESET}", end="\r")
-        result = lyrics_manager.fetch_and_embed(
-            downloaded_file, final_title, final_artist,
-            user_query=user_query, audio_format=audio_format,
-            is_cover=is_cover
-        )
+        # ── Squarify thumbnail ───────────────────────────────────────────────
+        _squarify_thumbnail(downloaded_file, artist_dir, audio_format)
+
+        # ── Embed lyrics (from background fetch) ─────────────────────────────
+        song, lyrics_status = lyrics_future.result()
+        if song:
+            result = lyrics_manager.embed_lyrics(downloaded_file, song, audio_format)
+        else:
+            from .lyrics import LyricsResult
+            result = LyricsResult(lyrics_status)
 
         # ── Write tags ───────────────────────────────────────────────────────
         _write_tags(downloaded_file, final_title, final_artist,

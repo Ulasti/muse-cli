@@ -64,13 +64,12 @@ class LyricsManager:
             except Exception as e:
                 print(f"{YELLOW}⚠  [E05] Genius init failed: {e}{RESET}")
 
-    def fetch_and_embed(self, file_path: str, title: str, artist: str,
-                        user_query: str = "", audio_format: str = "m4a",
-                        is_cover: bool = False) -> LyricsResult:
+    def fetch_lyrics(self, title: str, artist: str,
+                     user_query: str = "",
+                     is_cover: bool = False):
+        """Network-only lyrics fetch. Returns (song, status_msg) or (None, status_msg)."""
         if not self.genius:
-            return LyricsResult(
-                f"{YELLOW}⚠  Lyrics unavailable — no API token (run muse-cli --config){RESET}"
-            )
+            return None, f"{YELLOW}⚠  Lyrics unavailable — no API token (run muse-cli --config){RESET}"
 
         clean_title  = _clean_for_search(title)
         clean_artist = _clean_for_search(artist)
@@ -108,17 +107,33 @@ class LyricsManager:
                 pass
 
         if song:
-            try:
-                _embed_lyrics(file_path, song.lyrics, audio_format)
-            except Exception as e:
-                return LyricsResult(f"{YELLOW}⚠  Lyrics found but embed failed: {e}{RESET}")
-            return LyricsResult(
-                f"{DIM}   Lyrics: \"{song.title}\" by {song.artist}{RESET}"
-            )
+            return song, f"{DIM}   Lyrics: \"{song.title}\" by {song.artist}{RESET}"
 
+        return None, f"{YELLOW}⚠  Lyrics not found for \"{clean_title}\"{RESET}"
+
+    def embed_lyrics(self, file_path: str, song, audio_format: str = "m4a") -> LyricsResult:
+        """Embed a previously fetched song's lyrics into the audio file."""
+        if not song:
+            return LyricsResult("")
+        try:
+            _embed_lyrics(file_path, song.lyrics, audio_format)
+        except Exception as e:
+            return LyricsResult(f"{YELLOW}⚠  Lyrics found but embed failed: {e}{RESET}")
         return LyricsResult(
-            f"{YELLOW}⚠  Lyrics not found for \"{clean_title}\"{RESET}"
+            f"{DIM}   Lyrics: \"{song.title}\" by {song.artist}{RESET}"
         )
+
+    def fetch_and_embed(self, file_path: str, title: str, artist: str,
+                        user_query: str = "", audio_format: str = "m4a",
+                        is_cover: bool = False) -> LyricsResult:
+        """Convenience method: fetch + embed in one call (backwards compatible)."""
+        song, status_msg = self.fetch_lyrics(title, artist, user_query, is_cover)
+        if song:
+            result = self.embed_lyrics(file_path, song, audio_format)
+            if result.status:
+                return result
+            return LyricsResult(status_msg)
+        return LyricsResult(status_msg)
 
     def _search(self, title: str, artist: str | None):
         try:
