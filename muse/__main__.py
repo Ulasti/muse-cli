@@ -7,7 +7,7 @@ import platform
 
 from .config import first_launch_setup, get_config, interactive_config, CONFIG_DIR
 from .utils import check_dependencies
-from .banner import print_banner
+from .banner import print_banner, STATUS_ROW, PROMPT_TEXT
 from .search import search_youtube, display_search_results
 from .downloader import download_song
 from .duplicate import DuplicateChecker
@@ -18,20 +18,19 @@ from .colors import CYAN, WHITE, GREEN, RED, RESET, YELLOW, DIM
 # ── Compact single-line output helpers ────────────────────────────────────────
 
 def _compact_line(text):
-    """Update the progress line (one line above the current cursor / prompt).
+    """Overwrite the banner status line (row 9) using absolute positioning.
 
-    Uses ANSI save-cursor / restore-cursor so the >>> prompt and any
-    text the user is typing stay untouched.
+    The banner is pinned above a scroll region, so this never disturbs
+    the >>> prompt or anything the user is typing.
     """
     cols = shutil.get_terminal_size((80, 24)).columns
     truncated = text[:cols - 1] if len(text) >= cols else text
     padding = " " * max(0, cols - len(truncated) - 1)
-    # \033[s  = save cursor position
-    # \033[1A = move up 1 line  (the progress-slot line)
-    # \r      = go to column 0
-    # <text>  = overwrite the line
-    # \033[u  = restore cursor position (back to >>> prompt)
-    sys.stdout.write(f"\033[s\033[1A\r{truncated}{padding}\033[u")
+    # \033[s          = save cursor position (inside scroll region)
+    # \033[<row>;1H   = jump to STATUS_ROW column 1 (the pinned banner area)
+    # <text+padding>  = overwrite the status line
+    # \033[u          = restore cursor (back to >>> prompt in scroll region)
+    sys.stdout.write(f"\033[s\033[{STATUS_ROW};1H{truncated}{padding}\033[u")
     sys.stdout.flush()
 
 
@@ -50,7 +49,9 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
             icon = {"searching": "⏳", "found": "⏳", "metadata": "⏳",
                     "downloading": "⏳", "lyrics": "⏳",
                     "done": "✅", "skip": "⏭️ ", "error": "❌"}.get(stage, "⏳")
-            _compact_line(f"{icon} {detail}")
+            pending = q.qsize()
+            suffix = f"  [{pending} pending]" if pending > 0 else ""
+            _compact_line(f"{icon} {detail}{suffix}")
 
         try:
             if entry.startswith(("http://", "https://", "www.")):
@@ -93,6 +94,11 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
 
         stats["completed"] += 1
         q.task_done()
+
+        # If queue is empty, show session summary on the status line
+        if q.empty():
+            n = stats["completed"]
+            _compact_line(f"✅ {n} song{'s' if n != 1 else ''} downloaded this session")
 
 
 # ── Batch mode (--batch flag) — unchanged ─────────────────────────────────────
@@ -395,6 +401,8 @@ def main():
             try:
                 user_input = input(f"{CYAN}>>> {RESET}").strip()
             except EOFError:
+                sys.stdout.write("\033[r")
+                sys.stdout.flush()
                 break
 
             if not user_input:
@@ -432,7 +440,6 @@ def main():
                                 q.put({"entry": selected["url"], "user_query": query})
                                 pending = q.qsize()
                                 print(f"⏳ Queued: {selected['title']} [{pending} pending]")
-                                print()  # reserve progress-slot line
                                 break
                             else:
                                 print(f"{RED}Invalid number{RESET}")
@@ -457,7 +464,6 @@ def main():
                         fname = os.path.basename(candidate)
                         pending = q.qsize()
                         print(f"📦 Loaded {len(file_lines)} songs from {fname} [{pending} pending]")
-                        print()  # reserve progress-slot line
                     else:
                         print(f"{YELLOW}File is empty{RESET}")
                 except Exception as e:
@@ -473,7 +479,6 @@ def main():
             q.put({"entry": entry, "user_query": user_query})
             pending = q.qsize()
             print(f"⏳ Queued: {entry} [{pending} pending]")
-            print()  # reserve progress-slot line above next prompt
 
     except KeyboardInterrupt:
         if not q.empty():
@@ -488,6 +493,9 @@ def main():
             # Wait for current download to finish (with timeout)
             q.join()
 
+        # Reset scroll region so the terminal is normal after exit
+        sys.stdout.write("\033[r")
+        sys.stdout.flush()
         print(f"\n{CYAN}Exiting MUSE-CLI. Goodbye!{RESET}")
         sys.exit(0)
 
