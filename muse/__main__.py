@@ -17,12 +17,22 @@ from .colors import CYAN, WHITE, GREEN, RED, RESET, YELLOW, DIM
 
 # ── Compact single-line output helpers ────────────────────────────────────────
 
-def _compact_line(text, end="\r"):
-    """Print a single updating line, padded to overwrite previous content."""
+def _compact_line(text):
+    """Update the progress line (one line above the current cursor / prompt).
+
+    Uses ANSI save-cursor / restore-cursor so the >>> prompt and any
+    text the user is typing stay untouched.
+    """
     cols = shutil.get_terminal_size((80, 24)).columns
     truncated = text[:cols - 1] if len(text) >= cols else text
     padding = " " * max(0, cols - len(truncated) - 1)
-    print(f"\r{truncated}{padding}", end=end, flush=True)
+    # \033[s  = save cursor position
+    # \033[1A = move up 1 line  (the progress-slot line)
+    # \r      = go to column 0
+    # <text>  = overwrite the line
+    # \033[u  = restore cursor position (back to >>> prompt)
+    sys.stdout.write(f"\033[s\033[1A\r{truncated}{padding}\033[u")
+    sys.stdout.flush()
 
 
 def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
@@ -40,11 +50,7 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
             icon = {"searching": "⏳", "found": "⏳", "metadata": "⏳",
                     "downloading": "⏳", "lyrics": "⏳",
                     "done": "✅", "skip": "⏭️ ", "error": "❌"}.get(stage, "⏳")
-            if stage in ("done", "skip", "error"):
-                _compact_line(f"{icon} {detail}", end="\n")
-                stats["lines_printed"] += 1
-            else:
-                _compact_line(f"{icon} {detail}")
+            _compact_line(f"{icon} {detail}")
 
         try:
             if entry.startswith(("http://", "https://", "www.")):
@@ -86,12 +92,6 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
             compact_cb("error", f"{entry} · {e}")
 
         stats["completed"] += 1
-
-        # Periodic terminal refresh
-        if stats["lines_printed"] >= 30:
-            print_banner(stats)
-            stats["lines_printed"] = 0
-
         q.task_done()
 
 
@@ -380,7 +380,7 @@ def main():
     # ── Interactive queue mode ────────────────────────────────────────────
     print_banner()
 
-    stats = {"completed": 0, "lines_printed": 0}
+    stats = {"completed": 0}
     q = queue.Queue()
 
     worker = threading.Thread(
@@ -432,6 +432,7 @@ def main():
                                 q.put({"entry": selected["url"], "user_query": query})
                                 pending = q.qsize()
                                 print(f"⏳ Queued: {selected['title']} [{pending} pending]")
+                                print()  # reserve progress-slot line
                                 break
                             else:
                                 print(f"{RED}Invalid number{RESET}")
@@ -456,6 +457,7 @@ def main():
                         fname = os.path.basename(candidate)
                         pending = q.qsize()
                         print(f"📦 Loaded {len(file_lines)} songs from {fname} [{pending} pending]")
+                        print()  # reserve progress-slot line
                     else:
                         print(f"{YELLOW}File is empty{RESET}")
                 except Exception as e:
@@ -471,6 +473,7 @@ def main():
             q.put({"entry": entry, "user_query": user_query})
             pending = q.qsize()
             print(f"⏳ Queued: {entry} [{pending} pending]")
+            print()  # reserve progress-slot line above next prompt
 
     except KeyboardInterrupt:
         if not q.empty():
