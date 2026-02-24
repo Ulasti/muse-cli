@@ -21,7 +21,7 @@ def _clean_uploader(uploader: str) -> str:
         r'\s*Music\s*$',
     ]
     for s in suffixes:
-        uploader = re.sub(s, uploader, uploader, flags=re.IGNORECASE)
+        uploader = re.sub(s, '', uploader, flags=re.IGNORECASE)
     # Also strip anything after | in the uploader field (album bleed)
     uploader = uploader.split('|')[0]
     return uploader.strip()

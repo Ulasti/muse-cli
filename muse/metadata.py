@@ -1,4 +1,5 @@
 import re
+import time
 
 # ANSI colors
 DIM   = "\033[2m"
