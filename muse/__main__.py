@@ -1,5 +1,8 @@
 import sys
 import os
+import queue
+import threading
+import shutil
 import platform
 
 from .config import first_launch_setup, get_config, interactive_config, CONFIG_DIR
@@ -11,6 +14,88 @@ from .duplicate import DuplicateChecker
 from .lyrics import LyricsManager
 from .colors import CYAN, WHITE, GREEN, RED, RESET, YELLOW, DIM
 
+
+# ── Compact single-line output helpers ────────────────────────────────────────
+
+def _compact_line(text, end="\r"):
+    """Print a single updating line, padded to overwrite previous content."""
+    cols = shutil.get_terminal_size((80, 24)).columns
+    truncated = text[:cols - 1] if len(text) >= cols else text
+    padding = " " * max(0, cols - len(truncated) - 1)
+    print(f"\r{truncated}{padding}", end=end, flush=True)
+
+
+def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
+    """Daemon thread: pulls items from the queue and downloads sequentially."""
+    while True:
+        item = q.get()
+        if item is None:
+            q.task_done()
+            break
+
+        entry = item["entry"]
+        user_query = item["user_query"]
+
+        def compact_cb(stage, detail):
+            icon = {"searching": "⏳", "found": "⏳", "metadata": "⏳",
+                    "downloading": "⏳", "lyrics": "⏳",
+                    "done": "✅", "skip": "⏭️ ", "error": "❌"}.get(stage, "⏳")
+            if stage in ("done", "skip", "error"):
+                _compact_line(f"{icon} {detail}", end="\n")
+                stats["lines_printed"] += 1
+            else:
+                _compact_line(f"{icon} {detail}")
+
+        try:
+            if entry.startswith(("http://", "https://", "www.")):
+                url = entry
+                if url.startswith("www."):
+                    url = "https://" + url
+                download_song(
+                    url,
+                    config["output_base"],
+                    duplicate_checker,
+                    lyrics_manager,
+                    user_query=user_query,
+                    audio_format=config["audio_format"],
+                    batch_mode=True,
+                    on_progress=compact_cb,
+                )
+            else:
+                compact_cb("searching", f"searching: {entry}")
+                results = search_youtube(entry, max_results=1)
+                if results:
+                    top = results[0]
+                    compact_cb("found", f"{top['title']} · found, downloading...")
+                    download_song(
+                        top["url"],
+                        config["output_base"],
+                        duplicate_checker,
+                        lyrics_manager,
+                        user_query=entry,
+                        audio_format=config["audio_format"],
+                        batch_mode=True,
+                        on_progress=compact_cb,
+                    )
+                else:
+                    compact_cb("error", f"{entry} · no results found")
+        except KeyboardInterrupt:
+            q.task_done()
+            return
+        except Exception as e:
+            compact_cb("error", f"{entry} · {e}")
+
+        stats["completed"] += 1
+
+        # Periodic terminal refresh
+        if stats["lines_printed"] >= 30:
+            print_banner(stats)
+            stats["lines_printed"] = 0
+
+        q.task_done()
+
+
+# ── Batch mode (--batch flag) — unchanged ─────────────────────────────────────
 
 def _collect_batch_entries() -> list[str]:
     """Prompt user to enter songs one per line. Returns list of entries."""
@@ -257,10 +342,7 @@ def main():
         _process_batch(entries, config, duplicate_checker, lyrics_manager)
         return
 
-    # Non-interactive single-run mode: if arguments are provided (and
-    # not one of the special flags handled above), treat them as a
-    # search query or URL, run the download once and exit. This makes
-    # `muse-cli <song name>` usable from automations/ssh scripts.
+    # ── Non-interactive single-shot mode ─────────────────────────────────
     if len(sys.argv) > 1:
         query = " ".join(sys.argv[1:]).strip()
         if query:
@@ -293,26 +375,39 @@ def main():
                 else:
                     print(f"{RED}No results found{RESET}")
 
-        # single-shot run complete
         return
 
+    # ── Interactive queue mode ────────────────────────────────────────────
     print_banner()
+
+    stats = {"completed": 0, "lines_printed": 0}
+    q = queue.Queue()
+
+    worker = threading.Thread(
+        target=_queue_worker,
+        args=(q, config, duplicate_checker, lyrics_manager, stats),
+        daemon=True,
+    )
+    worker.start()
 
     try:
         while True:
-            user_input = input(f"{CYAN}>>> {RESET}").strip()
+            try:
+                user_input = input(f"{CYAN}>>> {RESET}").strip()
+            except EOFError:
+                break
 
             if not user_input:
                 continue
 
-            # ── Batch mode ─────────────────────────────────────────────────
+            # ── Batch sub-mode ────────────────────────────────────────────
             if user_input.lower() == "batch":
                 entries = _collect_batch_entries()
                 _process_batch(entries, config, duplicate_checker, lyrics_manager)
                 print()
                 continue
 
-            # ── Search mode ──────────────────────────────────────────────────
+            # ── Search mode (synchronous — user picks) ────────────────────
             if user_input.lower().startswith("search "):
                 query = user_input[7:].strip()
                 if not query:
@@ -334,15 +429,9 @@ def main():
                             idx = int(choice)
                             if 1 <= idx <= len(results):
                                 selected = results[idx - 1]
-                                print(f"\n{GREEN}Selected:{RESET} {selected['title']}")
-                                download_song(
-                                    selected['url'],
-                                    config["output_base"],
-                                    duplicate_checker,
-                                    lyrics_manager,
-                                    user_query=query,
-                                    audio_format=config["audio_format"]
-                                )
+                                q.put({"entry": selected["url"], "user_query": query})
+                                pending = q.qsize()
+                                print(f"⏳ Queued: {selected['title']} [{pending} pending]")
                                 break
                             else:
                                 print(f"{RED}Invalid number{RESET}")
@@ -350,42 +439,52 @@ def main():
                             print(f"{RED}Please enter a valid number{RESET}")
                         except KeyboardInterrupt:
                             break
-
-            # ── URL download ─────────────────────────────────────────────────
-            elif user_input.startswith(("http://", "https://", "www.")):
-                if user_input.startswith("www."):
-                    user_input = "https://" + user_input
-                download_song(
-                    user_input,
-                    config["output_base"],
-                    duplicate_checker,
-                    lyrics_manager,
-                    user_query="",
-                    audio_format=config["audio_format"]
-                )
-
-            # ── Direct download ──────────────────────────────────────────────
-            else:
-                print(f"{CYAN}🔍 Searching for top result: {user_input}{RESET}")
-                results = search_youtube(user_input, max_results=1)
-
-                if results:
-                    top = results[0]
-                    print(f"{GREEN}Found:{RESET} {top['title']}  {CYAN}by{RESET} {top['uploader']}")
-                    download_song(
-                        top['url'],
-                        config["output_base"],
-                        duplicate_checker,
-                        lyrics_manager,
-                        user_query=user_input,
-                        audio_format=config["audio_format"]
-                    )
                 else:
                     print(f"{RED}No results found{RESET}")
 
-            print()
+                continue
 
-    except (KeyboardInterrupt, EOFError):
+            # ── .txt file expansion ───────────────────────────────────────
+            candidate = user_input.strip("'\"")
+            if candidate.endswith('.txt') and os.path.isfile(candidate):
+                try:
+                    with open(candidate, 'r') as f:
+                        file_lines = [l.strip() for l in f if l.strip()]
+                    if file_lines:
+                        for fl in file_lines:
+                            q.put({"entry": fl, "user_query": fl})
+                        fname = os.path.basename(candidate)
+                        pending = q.qsize()
+                        print(f"📦 Loaded {len(file_lines)} songs from {fname} [{pending} pending]")
+                    else:
+                        print(f"{YELLOW}File is empty{RESET}")
+                except Exception as e:
+                    print(f"{RED}❌ Could not read file: {e}{RESET}")
+                continue
+
+            # ── URL or song name → queue ──────────────────────────────────
+            entry = user_input
+            user_query = ""
+            if not entry.startswith(("http://", "https://", "www.")):
+                user_query = entry
+
+            q.put({"entry": entry, "user_query": user_query})
+            pending = q.qsize()
+            print(f"⏳ Queued: {entry} [{pending} pending]")
+
+    except KeyboardInterrupt:
+        if not q.empty():
+            print(f"\n{YELLOW}Finishing current download...{RESET}")
+            # Drain remaining items so worker can finish current
+            while not q.empty():
+                try:
+                    q.get_nowait()
+                    q.task_done()
+                except queue.Empty:
+                    break
+            # Wait for current download to finish (with timeout)
+            q.join()
+
         print(f"\n{CYAN}Exiting MUSE-CLI. Goodbye!{RESET}")
         sys.exit(0)
 

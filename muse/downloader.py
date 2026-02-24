@@ -96,7 +96,8 @@ def extract_video_info(url: str) -> tuple[str, str, str, bool]:
     return artist, _strip_noise(raw_title) or raw_title, video_id, is_cover
 
 
-def download_with_progress(url: str, output_template: str, audio_format: str) -> str:
+def download_with_progress(url: str, output_template: str, audio_format: str,
+                           on_progress=None) -> str:
     download_cmd = [
         "yt-dlp", "--no-playlist",
         "--extract-audio",
@@ -126,16 +127,20 @@ def download_with_progress(url: str, output_template: str, audio_format: str) ->
                     if m:
                         percent = float(m.group(1))
                         if abs(percent - last_percent) >= 1:
-                            filled = int((percent / 100) * BAR_LENGTH)
-                            bar = (
-                                f"{CYAN}[{'█' * filled}{'▒' * (BAR_LENGTH - filled)}]{RESET}"
-                                f" {CYAN}{int(percent)}%{RESET}"
-                            )
-                            print(f"\r   {bar}", end="", flush=True)
+                            if on_progress:
+                                on_progress("downloading", f"{int(percent)}%")
+                            else:
+                                filled = int((percent / 100) * BAR_LENGTH)
+                                bar = (
+                                    f"{CYAN}[{'█' * filled}{'▒' * (BAR_LENGTH - filled)}]{RESET}"
+                                    f" {CYAN}{int(percent)}%{RESET}"
+                                )
+                                print(f"\r   {bar}", end="", flush=True)
                             last_percent = percent
             except Exception:
                 continue
-        print()
+        if not on_progress:
+            print()
         proc.wait()
         if proc.returncode != 0:
             raise Exception(f"[E03] yt-dlp exited with code {proc.returncode}")
@@ -272,20 +277,34 @@ def _sanitize_path_component(name: str) -> str:
 
 def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
                   user_query: str = "", audio_format: str = "m4a",
-                  batch_mode: bool = False):
+                  batch_mode: bool = False, on_progress=None):
+    """Download a song. When on_progress is set, use compact single-line output."""
     try:
         if not url.startswith(("http://", "https://")):
-            print(f"{RED}❌ Invalid URL{RESET}")
+            if on_progress:
+                on_progress("error", "Invalid URL")
+            else:
+                print(f"{RED}❌ Invalid URL{RESET}")
             return
 
         # ── Fetch video info ─────────────────────────────────────────────────
-        print(f"{DIM}   Fetching info...{RESET}", end="\r")
+        if on_progress:
+            on_progress("searching", "fetching info...")
+        else:
+            print(f"{DIM}   Fetching info...{RESET}", end="\r")
         artist, title, video_id, is_cover = extract_video_info(url)
-        print(f"   {GREEN}▶ {artist} — {title}{RESET}          ")
+
+        if on_progress:
+            on_progress("found", f"{artist} — {title}")
+        else:
+            print(f"   {GREEN}▶ {artist} — {title}{RESET}          ")
 
         # ── Duplicate check ──────────────────────────────────────────────────
         is_dup, existing_file = duplicate_checker.is_duplicate_by_id(video_id)
         if is_dup:
+            if on_progress:
+                on_progress("skip", f"{artist} — {title} · already in library")
+                return
             print(f"{YELLOW}⚠  Already in library: {existing_file}{RESET}")
             if batch_mode:
                 print(f"{DIM}   Skipped (batch mode).{RESET}")
@@ -305,7 +324,10 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
             duplicate_checker.remove_entries(video_id, existing_file)
 
         # ── MusicBrainz metadata lookup ──────────────────────────────────────
-        print(f"{DIM}   Looking up metadata...{RESET}", end="\r")
+        if on_progress:
+            on_progress("metadata", f"{artist} — {title} · fetching metadata...")
+        else:
+            print(f"{DIM}   Looking up metadata...{RESET}", end="\r")
         from .metadata import lookup_metadata
         mb = lookup_metadata(artist, title, is_cover=is_cover)
 
@@ -315,7 +337,9 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         album        = mb.get('album')  or ""
         year         = mb.get('year')   or ""
 
-        if mb:
+        if on_progress:
+            on_progress("metadata", f"{final_artist} — {final_title} · metadata ✓")
+        elif mb:
             print(f"{DIM}   Metadata: {final_artist} — {final_title}"
                   f"{(' / ' + album) if album else ''}"
                   f"{(' (' + year + ')') if year else ''}{RESET}          ")
@@ -332,7 +356,14 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         output_template = os.path.join(artist_dir, f"{safe_title}.%(ext)s")
 
         # ── Start lyrics fetch in background, download in foreground ─────────
-        print(f"{DIM}   Downloading...{RESET}")
+        if on_progress:
+            on_progress("downloading", f"{final_artist} — {final_title} · downloading 0%")
+        else:
+            print(f"{DIM}   Downloading...{RESET}")
+
+        def _dl_progress(stage, detail):
+            on_progress(stage, f"{final_artist} — {final_title} · downloading {detail}")
+
         with ThreadPoolExecutor(max_workers=1) as executor:
             lyrics_future = executor.submit(
                 lyrics_manager.fetch_lyrics,
@@ -340,7 +371,10 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
                 user_query=user_query, is_cover=is_cover
             )
 
-            downloaded_file = download_with_progress(url, output_template, audio_format)
+            downloaded_file = download_with_progress(
+                url, output_template, audio_format,
+                on_progress=_dl_progress if on_progress else None
+            )
 
         desired_path = os.path.join(artist_dir, f"{safe_title}.{audio_format}")
         if downloaded_file != desired_path and os.path.exists(downloaded_file):
@@ -350,7 +384,10 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         # ── Content duplicate check ──────────────────────────────────────────
         is_dup, existing_file = duplicate_checker.is_duplicate(downloaded_file)
         if is_dup:
-            print(f"{YELLOW}⚠  Duplicate content, removing...{RESET}")
+            if on_progress:
+                on_progress("skip", f"{final_artist} — {final_title} · duplicate content")
+            else:
+                print(f"{YELLOW}⚠  Duplicate content, removing...{RESET}")
             try:
                 os.remove(downloaded_file)
             except Exception:
@@ -361,12 +398,16 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         _squarify_thumbnail(downloaded_file, artist_dir, audio_format)
 
         # ── Embed lyrics (from background fetch) ─────────────────────────────
+        if on_progress:
+            on_progress("lyrics", f"{final_artist} — {final_title} · lyrics...")
         song, lyrics_status = lyrics_future.result()
         if song:
             result = lyrics_manager.embed_lyrics(downloaded_file, song, audio_format)
         else:
             from .lyrics import LyricsResult
             result = LyricsResult(lyrics_status)
+
+        lyrics_ok = "✓" if song else "✗"
 
         # ── Write tags ───────────────────────────────────────────────────────
         _write_tags(downloaded_file, final_title, final_artist,
@@ -378,13 +419,21 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         _add_to_apple_music(downloaded_file)
 
         # ── Summary ──────────────────────────────────────────────────────────
-        print(f"{GREEN}✅ {final_artist} — {final_title}{RESET}")
-        if album:
-            print(f"{DIM}   Album: {album}{(' (' + year + ')') if year else ''}{RESET}")
-        print(result.status)
+        if on_progress:
+            album_info = f" · {album}" if album else ""
+            year_info = f" ({year})" if year else ""
+            on_progress("done", f"{final_artist} — {final_title}{album_info}{year_info} · lyrics {lyrics_ok}")
+        else:
+            print(f"{GREEN}✅ {final_artist} — {final_title}{RESET}")
+            if album:
+                print(f"{DIM}   Album: {album}{(' (' + year + ')') if year else ''}{RESET}")
+            print(result.status)
 
     except KeyboardInterrupt:
         raise
     except Exception as e:
-        print(f"{RED}❌ {e}{RESET}")
-        print(f"{DIM}   See github.com/Ulasti/muse-cli for error codes{RESET}")
+        if on_progress:
+            on_progress("error", str(e))
+        else:
+            print(f"{RED}❌ {e}{RESET}")
+            print(f"{DIM}   See github.com/Ulasti/muse-cli for error codes{RESET}")
