@@ -1,142 +1,132 @@
-# 🎵 muse-cli
+# muse-cli
 
-Music downloading made easy with built in lyrics embedding packaged into a cli-tool.
+A command-line tool that downloads music from YouTube and automatically tags it with metadata from MusicBrainz and lyrics from Genius.
 
----
+Type a song name, get a properly tagged audio file. That's it.
 
-## Requirements
+## Install
 
-- Python 3.10+
-- pipx
-- ffmpeg
+Requires **Python 3.10+** and **ffmpeg**. The install script handles everything else (ffmpeg, yt-dlp, pipx).
 
-### Install muse (Mac and Linux)
+**macOS / Linux:**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ulasti/muse-cli/main/install.sh -o /tmp/muse-install.sh && bash /tmp/muse-install.sh
+curl -fsSL https://raw.githubusercontent.com/Ulasti/muse-cli/main/install.sh | bash
 ```
 
----
-
-## Update
+**Manual install** (if you prefer):
 
 ```bash
-muse-cli --update
+# install dependencies first
+brew install ffmpeg          # macOS
+sudo apt install ffmpeg      # Ubuntu/Debian
+
+# then install muse-cli
+pipx install git+https://github.com/Ulasti/muse-cli.git
 ```
 
----
+After installing, restart your terminal and run `muse-cli`.
 
 ## Usage
 
-Launch the app:
-
 ```bash
-muse-cli
+muse-cli                              # launch interactive mode
+muse-cli bohemian rhapsody queen      # download top result and exit
+muse-cli https://youtube.com/watch?v=... # download from URL and exit
 ```
 
-Then type at the prompt:
+### Interactive mode
 
-| Input | What it does |
+Once inside the interactive prompt (`>>>`):
+
+| Input | What happens |
 |---|---|
-| `Song title (optional artist name)` | Searches the internet, downloads the most compatible result instantly|
-| `search song title (optional artist name)` | Shows top 5 results to choose from |
-| `https://y...` | Downloads directly from URL |
+| `bohemian rhapsody` | Downloads the top YouTube result |
+| `search bohemian rhapsody` | Shows 5 results to pick from |
+| `https://youtube.com/watch?v=...` | Downloads directly from URL |
 
----
+### What muse-cli does for each download
 
-## Commands
+1. Searches YouTube (or takes your URL)
+2. Downloads audio via yt-dlp (M4A or MP3)
+3. Looks up metadata on MusicBrainz (artist, album, year)
+4. Fetches and embeds lyrics from Genius
+5. Writes ID3/MP4 tags and organizes into artist/album folders
+6. Detects duplicates by video ID and file hash
 
-```bash
-muse-cli --config     # Edit settings (output folder, Genius token)
-muse-cli --update     # Pull and install latest version from GitHub
-muse-cli --uninstall  # Remove muse-cli and optionally clean up dependencies
-```
+### Output structure
 
----
-
-## Lyrics (Optional)
-
-muse-cli can automatically fetch and embed lyrics into downloaded files via the Genius API.
-
-1. Go to https://genius.com/api-clients
-2. Create an account and generate a token
-3. Copy the **Client Access Token**
-4. Paste it when prompted on first launch, or run `muse-cli --config` to set it later
-
----
-
-## Output Structure
+Files are saved to `~/Documents/Music` by default (configurable):
 
 ```
 ~/Documents/Music/
-├── ARTIST NAME/
-│   └── TRACK NAME.mp3
-└── ARTIST NAME 2/
-    └── TRACK NAME.mp3
+  Artist Name/
+    Album Name/
+      Song Title.m4a
+  Another Artist/
+    Unknown Album/
+      Track.m4a
 ```
 
----
-
-## Update
+## Configuration
 
 ```bash
-muse-cli --update
+muse-cli --config
 ```
 
----
+Settings menu lets you change:
 
-## Uninstall
+- **Genius API token** - for lyrics (see below)
+- **Output directory** - where music is saved
+- **Audio format** - M4A (default, better quality) or MP3
+
+Settings are stored in `~/.config/muse-cli/config.json`.
+
+### Lyrics setup (optional)
+
+To enable automatic lyrics embedding:
+
+1. Create an account at [genius.com/api-clients](https://genius.com/api-clients)
+2. Generate a **Client Access Token**
+3. Enter it when prompted on first launch, or via `muse-cli --config`
+
+Without a token, everything else works fine, you just won't get lyrics.
+
+## Other commands
 
 ```bash
-muse-cli --uninstall
+muse-cli --update      # update to latest version from GitHub
+muse-cli --uninstall   # remove muse-cli and optionally clean up dependencies
 ```
 
----
+## Error codes
 
-## Error code list
-
-| Code | Cause | Fix |
+| Code | Cause | Fix |
 |---|---|---|
-| `E01` | Connection timeout | Check your internet |
-| `E02` | yt-dlp failed | Run muse-cli --update |
-| `E03` | Download failed | Try again or use URL directly |
-| `E04` | No MP3 after download | Check ffmpeg is installed |
-| `E05` | Genius init failed | Run muse-cli --config |
-| `E06` | Genius token expired | Run muse-cli --config |
-| `E07` | Genius rate limit | Wait a moment and retry |
-
-
-
----
+| E01 | Connection timeout | Check your internet |
+| E02 | yt-dlp failed | Run `muse-cli --update` or update yt-dlp |
+| E03 | Download failed | Try again or use a direct URL |
+| E04 | No audio file after download | Make sure ffmpeg is installed |
+| E05 | Genius init failed | Check your token with `muse-cli --config` |
+| E06 | Genius token expired | Regenerate token, update with `muse-cli --config` |
+| E07 | Genius rate limit | Wait a moment and retry |
 
 ## Development
 
 ```bash
 git clone https://github.com/Ulasti/muse-cli.git
 cd muse-cli
-python3 -m venv venv
-source venv/bin/activate
+python3 -m venv venv && source venv/bin/activate
 pip install -e .
 muse-cli
 ```
 
-To run without installing:
-
-```bash
-python -m muse
-```
-
----
-
 ## Credits
 
-- [yt-dlp](https://github.com/yt-dlp/yt-dlp)
-- [Genius](https://genius.com)
-- [lyricsgenius](https://github.com/johnwmillr/LyricsGenius)
-- Created by ulasti
+Built with [yt-dlp](https://github.com/yt-dlp/yt-dlp), [MusicBrainz](https://musicbrainz.org), [lyricsgenius](https://github.com/johnwmillr/LyricsGenius), and [mutagen](https://github.com/quodlibet/mutagen).
 
----
+Created by [ulasti](https://github.com/Ulasti).
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT - see [LICENSE](LICENSE)
