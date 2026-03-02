@@ -8,7 +8,7 @@ except FileNotFoundError:
 
 setup(
     name="muse-cli",
-    version="1.0.0",
+    version="0.1.2",
     author="ulasti",
     description="A CLI tool to download audio from YouTube with lyrics and metadata",
     long_description=long_description,
