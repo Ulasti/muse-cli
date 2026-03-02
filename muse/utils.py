@@ -73,7 +73,7 @@ def install_system_dependencies(tools):
                 subprocess.check_call([
                     sys.executable, "-m", "pip", "install",
                     "--break-system-packages", "yt-dlp"
-                ])
+                ], env={**os.environ, "PIP_BREAK_SYSTEM_PACKAGES": "1"})
                 print(f"{GREEN}✓ yt-dlp installed{RESET}")
             except Exception:
                 print(f"{RED}Failed to install yt-dlp{RESET}")
