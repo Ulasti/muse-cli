@@ -153,25 +153,30 @@ def lookup_metadata(artist: str, title: str, is_cover: bool = False) -> dict:
         )
         global _last_request_time
         # Atomically enforce the 1s spacing between requests: read last
-        # request time, sleep if needed, then update the timestamp so other
-        # threads will observe the reserved slot.
-        with _last_request_lock:
-            elapsed = time.monotonic() - _last_request_time
-            if elapsed < 1.0:
-                time.sleep(1.0 - elapsed)
-            _last_request_time = time.monotonic()
-
+        # request time, sleep if needed, then perform the request and
+        # update the timestamp while holding the same lock to prevent
+        # races with other threads.
         for attempt in range(2):
             try:
-                if is_cover:
-                    result = musicbrainzngs.search_recordings(
-                        recording=title, limit=10
-                    )
-                else:
-                    result = musicbrainzngs.search_recordings(
-                        artist=artist, recording=title, limit=50
-                    )
-                _last_request_time = time.monotonic()
+                with _last_request_lock:
+                    elapsed = time.monotonic() - _last_request_time
+                    if elapsed < 1.0:
+                        time.sleep(1.0 - elapsed)
+
+                    # Perform the network call while holding the lock so
+                    # the post-request timestamp update is atomic with the
+                    # earlier sleep calculation.
+                    if is_cover:
+                        result = musicbrainzngs.search_recordings(
+                            recording=title, limit=10
+                        )
+                    else:
+                        result = musicbrainzngs.search_recordings(
+                            artist=artist, recording=title, limit=50
+                        )
+
+                    _last_request_time = time.monotonic()
+
                 break
             except Exception:
                 if attempt == 0:

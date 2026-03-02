@@ -91,6 +91,7 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
             stats["current_status"] = line
             _compact_line(line)
 
+        download_succeeded = False
         try:
             if entry.startswith(("http://", "https://", "www.")):
                 url = entry
@@ -106,6 +107,7 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
                     batch_mode=True,
                     on_progress=compact_cb,
                 )
+                download_succeeded = True
             else:
                 compact_cb("searching", f"searching: {entry}")
                 results = search_youtube(entry, max_results=1)
@@ -122,6 +124,7 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
                         batch_mode=True,
                         on_progress=compact_cb,
                     )
+                    download_succeeded = True
                 else:
                     compact_cb("error", f"{entry} · no results found")
         except KeyboardInterrupt:
@@ -130,7 +133,8 @@ def _queue_worker(q, config, duplicate_checker, lyrics_manager, stats):
         except Exception as e:
             compact_cb("error", f"{entry} · {e}")
 
-        stats["completed"] += 1
+        if download_succeeded:
+            stats["completed"] += 1
         q.task_done()
 
         # If queue is empty, show session summary on the status line
@@ -446,6 +450,12 @@ def main():
             _lines_below_banner += 1  # the prompt + typed text counts as a line
 
             if user_input is None:   # EOF
+                # Graceful shutdown: enqueue sentinel so worker finishes
+                # pending work, wait for all tasks to complete, then join.
+                _tracked_print(f"\n{CYAN}EOF received — shutting down after pending jobs...{RESET}")
+                q.put(None)  # one sentinel per worker
+                q.join()
+                worker.join()
                 break
             if not user_input:
                 continue
@@ -453,8 +463,15 @@ def main():
             # ── Batch sub-mode ────────────────────────────────────────────
             if user_input.lower() == "batch":
                 entries = _collect_batch_entries()
-                _process_batch(entries, config, duplicate_checker, lyrics_manager)
-                _tracked_print()
+                # Enqueue each collected entry to the worker queue so
+                # all processing goes through the single `_queue_worker`
+                if entries:
+                    for fl in entries:
+                        q.put({"entry": fl, "user_query": fl if not fl.startswith(("http://", "https://", "www.")) else ""})
+                    pending = q.qsize()
+                    _tracked_print(f"📦 Queued {len(entries)} songs [{pending} pending]")
+                else:
+                    _tracked_print(f"{YELLOW}No entries to process.{RESET}")
                 continue
 
             # ── Search mode (synchronous — user picks) ────────────────────
