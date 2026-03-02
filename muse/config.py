@@ -2,14 +2,7 @@ import os
 import json
 import sys
 
-# ANSI colors
-CYAN   = "\033[36m"
-WHITE  = "\033[97m"
-GREEN  = "\033[32m"
-YELLOW = "\033[33m"
-RED    = "\033[31m"
-DIM    = "\033[2m"
-RESET  = "\033[0m"
+from .colors import CYAN, WHITE, GREEN, YELLOW, RED, DIM, RESET
 
 CONFIG_DIR  = os.path.expanduser("~/.config/muse-cli")
 CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
@@ -149,51 +142,56 @@ def install_dependencies(deps):
 def interactive_config():
     config = load_config()
 
-    print(f"\n{CYAN}{'═' * 60}{RESET}")
-    print(f"{WHITE}MUSE-CLI Configuration{RESET}")
-    print(f"{CYAN}{'═' * 60}{RESET}\n")
+    while True:
+        print(f"\n{CYAN}{'═' * 60}{RESET}")
+        print(f"{WHITE}MUSE-CLI Configuration{RESET}")
+        print(f"{CYAN}{'═' * 60}{RESET}\n")
 
-    fmt = config.get("audio_format", "m4a").upper()
-    print(f"{WHITE}Current Settings:{RESET}")
-    print(f"  {CYAN}1.{RESET} Genius API Token: {config['genius_token'][:20] + '...' if config['genius_token'] else 'Not set'}")
-    print(f"  {CYAN}2.{RESET} Output Directory: {config['output_base']}")
-    print(f"  {CYAN}3.{RESET} Audio Format:     {fmt}")
-    print(f"  {CYAN}4.{RESET} Reset to defaults")
-    print(f"  {CYAN}5.{RESET} Exit")
+        fmt = config.get("audio_format", "m4a").upper()
+        print(f"{WHITE}Current Settings:{RESET}")
+        print(f"  {CYAN}1.{RESET} Genius API Token: {config['genius_token'][:20] + '...' if config['genius_token'] else 'Not set'}")
+        print(f"  {CYAN}2.{RESET} Output Directory: {config['output_base']}")
+        print(f"  {CYAN}3.{RESET} Audio Format:     {fmt}")
+        print(f"  {CYAN}4.{RESET} Reset to defaults")
+        print(f"  {CYAN}5.{RESET} Exit")
 
-    choice = input(f"\n{WHITE}Select option (1-5): {RESET}").strip()
+        try:
+            choice = input(f"\n{WHITE}Select option (1-5): {RESET}").strip()
+        except (KeyboardInterrupt, EOFError):
+            print()
+            return
 
-    if choice == "1":
-        token = input(f"{WHITE}Enter new Genius API token: {RESET}").strip()
-        if token:
-            config["genius_token"] = token
+        if choice == "1":
+            token = input(f"{WHITE}Enter new Genius API token: {RESET}").strip()
+            if token:
+                config["genius_token"] = token
+                save_config(config)
+                print(f"{GREEN}✓ Token updated{RESET}")
+
+        elif choice == "2":
+            path = input(f"{WHITE}Enter new output directory: {RESET}").strip()
+            if path:
+                config["output_base"] = os.path.expanduser(path)
+                save_config(config)
+                print(f"{GREEN}✓ Output directory updated{RESET}")
+
+        elif choice == "3":
+            config["audio_format"] = _ask_audio_format()
             save_config(config)
-            print(f"{GREEN}✓ Token updated{RESET}")
 
-    elif choice == "2":
-        path = input(f"{WHITE}Enter new output directory: {RESET}").strip()
-        if path:
-            config["output_base"] = os.path.expanduser(path)
-            save_config(config)
-            print(f"{GREEN}✓ Output directory updated{RESET}")
+        elif choice == "4":
+            confirm = input(f"{YELLOW}Reset all settings to defaults? (y/N): {RESET}").strip().lower()
+            if confirm == 'y':
+                config = DEFAULT_CONFIG.copy()
+                config["first_launch"] = False
+                save_config(config)
+                print(f"{GREEN}✓ Settings reset to defaults{RESET}")
 
-    elif choice == "3":
-        config["audio_format"] = _ask_audio_format()
-        save_config(config)
+        elif choice == "5":
+            return
 
-    elif choice == "4":
-        confirm = input(f"{YELLOW}Reset all settings to defaults? (y/N): {RESET}").strip().lower()
-        if confirm == 'y':
-            config = DEFAULT_CONFIG.copy()
-            config["first_launch"] = False
-            save_config(config)
-            print(f"{GREEN}✓ Settings reset to defaults{RESET}")
-
-    elif choice == "5":
-        return
-
-    else:
-        print(f"{RED}Invalid option{RESET}")
+        else:
+            print(f"{RED}Invalid option{RESET}")
 
 
 def get_config():

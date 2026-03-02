@@ -1,16 +1,12 @@
 import os
 import subprocess
 import re
+import glob as glob_mod
+from concurrent.futures import ThreadPoolExecutor
 from mutagen.easyid3 import EasyID3
 from mutagen.mp4 import MP4
 
-# ANSI colors
-CYAN   = "\033[36m"
-GREEN  = "\033[32m"
-YELLOW = "\033[33m"
-RED    = "\033[31m"
-DIM    = "\033[2m"
-RESET  = "\033[0m"
+from .colors import CYAN, GREEN, YELLOW, RED, DIM, RESET
 
 BAR_LENGTH = 40
 
@@ -100,13 +96,15 @@ def extract_video_info(url: str) -> tuple[str, str, str, bool]:
     return artist, _strip_noise(raw_title) or raw_title, video_id, is_cover
 
 
-def download_with_progress(url: str, output_template: str, audio_format: str) -> str:
+def download_with_progress(url: str, output_template: str, audio_format: str,
+                           on_progress=None) -> str:
     download_cmd = [
         "yt-dlp", "--no-playlist",
         "--extract-audio",
         "--audio-format", audio_format,
         "--audio-quality", "0",
         "--embed-thumbnail",
+        "--write-thumbnail",
         "--add-metadata",
         "--newline", "--progress",
         "--progress-template", "download:%(progress.percentage)s",
@@ -129,16 +127,20 @@ def download_with_progress(url: str, output_template: str, audio_format: str) ->
                     if m:
                         percent = float(m.group(1))
                         if abs(percent - last_percent) >= 1:
-                            filled = int((percent / 100) * BAR_LENGTH)
-                            bar = (
-                                f"{CYAN}[{'█' * filled}{'▒' * (BAR_LENGTH - filled)}]{RESET}"
-                                f" {CYAN}{int(percent)}%{RESET}"
-                            )
-                            print(f"\r   {bar}", end="", flush=True)
+                            if on_progress:
+                                on_progress("downloading", f"{int(percent)}%")
+                            else:
+                                filled = int((percent / 100) * BAR_LENGTH)
+                                bar = (
+                                    f"{CYAN}[{'█' * filled}{'▒' * (BAR_LENGTH - filled)}]{RESET}"
+                                    f" {CYAN}{int(percent)}%{RESET}"
+                                )
+                                print(f"\r   {bar}", end="", flush=True)
                             last_percent = percent
             except Exception:
                 continue
-        print()
+        if not on_progress:
+            print()
         proc.wait()
         if proc.returncode != 0:
             raise Exception(f"[E03] yt-dlp exited with code {proc.returncode}")
@@ -147,14 +149,16 @@ def download_with_progress(url: str, output_template: str, audio_format: str) ->
         raise Exception(f"[E03] Download failed: {e}")
 
 
-def find_latest_audio(base_path: str, audio_format: str) -> str:
+def find_latest_audio(artist_dir: str, audio_format: str) -> str:
     ext = f".{audio_format}"
     audio_files = []
-    for root, _, files in os.walk(base_path):
-        for f in files:
-            if f.endswith(ext):
-                fp = os.path.join(root, f)
+    try:
+        for name in os.listdir(artist_dir):
+            if name.endswith(ext):
+                fp = os.path.join(artist_dir, name)
                 audio_files.append((fp, os.path.getctime(fp)))
+    except OSError:
+        pass
     if not audio_files:
         raise Exception(f"[E04] No {ext} file found — is ffmpeg installed?")
     return max(audio_files, key=lambda x: x[1])[0]
@@ -200,26 +204,117 @@ def _add_to_apple_music(filepath: str):
         pass
 
 
+def _squarify_thumbnail(audio_path: str, artist_dir: str, audio_format: str):
+    """Find the thumbnail file, center-crop to square, re-embed into audio."""
+    try:
+        from PIL import Image
+        import io
+    except ImportError:
+        return  # Pillow not installed, skip silently
+
+    # Find thumbnail file written by yt-dlp that matches this audio file's basename
+    thumb_path = None
+    audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
+    exts = ['.webp', '.jpg', '.jpeg', '.png']
+    candidates = []
+    for ext in exts:
+        # exact basename match (e.g. basename.jpg)
+        candidates.extend(glob_mod.glob(os.path.join(artist_dir, f"{audio_basename}{ext}")))
+        # prefixed variants (e.g. basename_1280x720.jpg or basename_extra.jpg)
+        candidates.extend(glob_mod.glob(os.path.join(artist_dir, f"{audio_basename}_*{ext}")))
+
+    if candidates:
+        # Pick the most recently created one
+        thumb_path = max(candidates, key=os.path.getctime)
+
+    if not thumb_path:
+        return
+
+    try:
+        img = Image.open(thumb_path)
+        w, h = img.size
+        if w == h:
+            # Already square, clean up and return
+            os.remove(thumb_path)
+            return
+
+        # Center-crop to square
+        size = min(w, h)
+        left = (w - size) // 2
+        top = (h - size) // 2
+        img = img.crop((left, top, left + size, top + size))
+
+        # Convert to JPEG bytes
+        buf = io.BytesIO()
+        img.convert("RGB").save(buf, format="JPEG", quality=92)
+        cover_data = buf.getvalue()
+
+        # Re-embed using mutagen
+        if audio_format == "mp3":
+            from mutagen.id3 import ID3, APIC
+            id3 = ID3(audio_path)
+            # Remove existing cover art
+            id3.delall("APIC")
+            id3.add(APIC(
+                encoding=3, mime="image/jpeg", type=3,
+                desc="Cover", data=cover_data
+            ))
+            id3.save()
+        else:
+            audio = MP4(audio_path)
+            from mutagen.mp4 import MP4Cover
+            audio["covr"] = [MP4Cover(cover_data, imageformat=MP4Cover.FORMAT_JPEG)]
+            audio.save()
+
+    except Exception as e:
+        print(f"{YELLOW}⚠  Could not squarify thumbnail: {e}{RESET}")
+    finally:
+        # Clean up thumbnail file
+        try:
+            if thumb_path and os.path.exists(thumb_path):
+                os.remove(thumb_path)
+        except Exception:
+            pass
+
+
 def _sanitize_path_component(name: str) -> str:
     return re.sub(r'[\/\\\:\*\?\"\<\>\|]', '', name).strip() or "Unknown"
 
 
 def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
-                  user_query: str = "", audio_format: str = "m4a"):
+                  user_query: str = "", audio_format: str = "m4a",
+                  batch_mode: bool = False, on_progress=None):
+    """Download a song. When on_progress is set, use compact single-line output."""
     try:
         if not url.startswith(("http://", "https://")):
-            print(f"{RED}❌ Invalid URL{RESET}")
+            if on_progress:
+                on_progress("error", "Invalid URL")
+            else:
+                print(f"{RED}❌ Invalid URL{RESET}")
             return
 
         # ── Fetch video info ─────────────────────────────────────────────────
-        print(f"{DIM}   Fetching info...{RESET}", end="\r")
+        if on_progress:
+            on_progress("searching", "fetching info...")
+        else:
+            print(f"{DIM}   Fetching info...{RESET}", end="\r")
         artist, title, video_id, is_cover = extract_video_info(url)
-        print(f"   {GREEN}▶ {artist} — {title}{RESET}          ")
+
+        if on_progress:
+            on_progress("found", f"{artist} — {title}")
+        else:
+            print(f"   {GREEN}▶ {artist} — {title}{RESET}          ")
 
         # ── Duplicate check ──────────────────────────────────────────────────
         is_dup, existing_file = duplicate_checker.is_duplicate_by_id(video_id)
         if is_dup:
+            if on_progress:
+                on_progress("skip", f"{artist} — {title} · already in library")
+                return
             print(f"{YELLOW}⚠  Already in library: {existing_file}{RESET}")
+            if batch_mode:
+                print(f"{DIM}   Skipped (batch mode).{RESET}")
+                return
             try:
                 choice = input(f"{YELLOW}   Overwrite? (y/N): {RESET}").strip().lower()
             except (KeyboardInterrupt, EOFError):
@@ -235,7 +330,10 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
             duplicate_checker.remove_entries(video_id, existing_file)
 
         # ── MusicBrainz metadata lookup ──────────────────────────────────────
-        print(f"{DIM}   Looking up metadata...{RESET}", end="\r")
+        if on_progress:
+            on_progress("metadata", f"{artist} — {title} · fetching metadata...")
+        else:
+            print(f"{DIM}   Looking up metadata...{RESET}", end="\r")
         from .metadata import lookup_metadata
         mb = lookup_metadata(artist, title, is_cover=is_cover)
 
@@ -245,14 +343,16 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         album        = mb.get('album')  or ""
         year         = mb.get('year')   or ""
 
-        if mb:
+        if on_progress:
+            on_progress("metadata", f"{final_artist} — {final_title} · metadata ✓")
+        elif mb:
             print(f"{DIM}   Metadata: {final_artist} — {final_title}"
                   f"{(' / ' + album) if album else ''}"
                   f"{(' (' + year + ')') if year else ''}{RESET}          ")
         else:
             print(f"   {DIM}Metadata not found on MusicBrainz{RESET}          ")
 
-        # ── Download ─────────────────────────────────────────────────────────
+        # ── Prepare output path ──────────────────────────────────────────────
         safe_artist = _sanitize_path_component(final_artist)
         safe_title  = _sanitize_path_component(final_title)
         safe_album  = _sanitize_path_component(album) if album else "Unknown Album"
@@ -261,8 +361,26 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         os.makedirs(artist_dir, exist_ok=True)
         output_template = os.path.join(artist_dir, f"{safe_title}.%(ext)s")
 
-        print(f"{DIM}   Downloading...{RESET}")
-        downloaded_file = download_with_progress(url, output_template, audio_format)
+        # ── Start lyrics fetch in background, download in foreground ─────────
+        if on_progress:
+            on_progress("downloading", f"{final_artist} — {final_title} · downloading 0%")
+        else:
+            print(f"{DIM}   Downloading...{RESET}")
+
+        def _dl_progress(stage, detail):
+            on_progress(stage, f"{final_artist} — {final_title} · downloading {detail}")
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            lyrics_future = executor.submit(
+                lyrics_manager.fetch_lyrics,
+                final_title, final_artist,
+                user_query=user_query, is_cover=is_cover
+            )
+
+            downloaded_file = download_with_progress(
+                url, output_template, audio_format,
+                on_progress=_dl_progress if on_progress else None
+            )
 
         desired_path = os.path.join(artist_dir, f"{safe_title}.{audio_format}")
         if downloaded_file != desired_path and os.path.exists(downloaded_file):
@@ -272,20 +390,30 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         # ── Content duplicate check ──────────────────────────────────────────
         is_dup, existing_file = duplicate_checker.is_duplicate(downloaded_file)
         if is_dup:
-            print(f"{YELLOW}⚠  Duplicate content, removing...{RESET}")
+            if on_progress:
+                on_progress("skip", f"{final_artist} — {final_title} · duplicate content")
+            else:
+                print(f"{YELLOW}⚠  Duplicate content, removing...{RESET}")
             try:
                 os.remove(downloaded_file)
             except Exception:
                 pass
             return
 
-        # ── Lyrics ───────────────────────────────────────────────────────────
-        print(f"{DIM}   Fetching lyrics...{RESET}", end="\r")
-        result = lyrics_manager.fetch_and_embed(
-            downloaded_file, final_title, final_artist,
-            user_query=user_query, audio_format=audio_format,
-            is_cover=is_cover
-        )
+        # ── Squarify thumbnail ───────────────────────────────────────────────
+        _squarify_thumbnail(downloaded_file, artist_dir, audio_format)
+
+        # ── Embed lyrics (from background fetch) ─────────────────────────────
+        if on_progress:
+            on_progress("lyrics", f"{final_artist} — {final_title} · lyrics...")
+        song, lyrics_status = lyrics_future.result()
+        if song:
+            result = lyrics_manager.embed_lyrics(downloaded_file, song, audio_format)
+        else:
+            from .lyrics import LyricsResult
+            result = LyricsResult(lyrics_status)
+
+        lyrics_ok = "✓" if song else "✗"
 
         # ── Write tags ───────────────────────────────────────────────────────
         _write_tags(downloaded_file, final_title, final_artist,
@@ -297,13 +425,21 @@ def download_song(url: str, output_base: str, duplicate_checker, lyrics_manager,
         _add_to_apple_music(downloaded_file)
 
         # ── Summary ──────────────────────────────────────────────────────────
-        print(f"{GREEN}✅ {final_artist} — {final_title}{RESET}")
-        if album:
-            print(f"{DIM}   Album: {album}{(' (' + year + ')') if year else ''}{RESET}")
-        print(result.status)
+        if on_progress:
+            album_info = f" · {album}" if album else ""
+            year_info = f" ({year})" if year else ""
+            on_progress("done", f"{final_artist} — {final_title}{album_info}{year_info} · lyrics {lyrics_ok}")
+        else:
+            print(f"{GREEN}✅ {final_artist} — {final_title}{RESET}")
+            if album:
+                print(f"{DIM}   Album: {album}{(' (' + year + ')') if year else ''}{RESET}")
+            print(result.status)
 
     except KeyboardInterrupt:
         raise
     except Exception as e:
-        print(f"{RED}❌ {e}{RESET}")
-        print(f"{DIM}   See github.com/Ulasti/muse-cli for error codes{RESET}")
+        if on_progress:
+            on_progress("error", str(e))
+        else:
+            print(f"{RED}❌ {e}{RESET}")
+            print(f"{DIM}   See github.com/Ulasti/muse-cli for error codes{RESET}")
