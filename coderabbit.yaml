@@ -1,0 +1,7 @@
+review:
+auto_review: true
+target_branches: [ “main”, “release” ]
+block_on: [ “security”, “tests-missing” ]
+comments:
+inline: true
+summary: true
