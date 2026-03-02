@@ -1,5 +1,6 @@
 import re
 import time
+import threading
 
 from .colors import DIM, RESET
 
@@ -7,6 +8,9 @@ _SECONDARY_REJECT = {"Live", "Compilation", "Remix", "DJ-mix", "Mixtape/Street",
                       "Demo", "Soundtrack", "Spokenword", "Interview", "Audiobook"}
 
 _last_request_time = 0.0
+
+# Lock to guard read-modify-write on `_last_request_time` for safe concurrency
+_last_request_lock = threading.Lock()
 
 
 def _normalize(text: str) -> str:
@@ -126,7 +130,7 @@ def _pick_best_recording(recordings: list, title: str, artist: str,
             best_key = key
             date = rel.get('date', '')
             best_result = {
-                'artist': rec_artist or rec_title,
+                'artist': rec_artist or artist,
                 'title':  rec_title  or title,
                 'album':  rel.get('title', ''),
                 'year':   date[:4] if len(date) >= 4 else '',
@@ -148,9 +152,14 @@ def lookup_metadata(artist: str, title: str, is_cover: bool = False) -> dict:
             'muse-cli', '1.0', 'https://github.com/Ulasti/muse-cli'
         )
         global _last_request_time
-        elapsed = time.monotonic() - _last_request_time
-        if elapsed < 1.0:
-            time.sleep(1.0 - elapsed)
+        # Atomically enforce the 1s spacing between requests: read last
+        # request time, sleep if needed, then update the timestamp so other
+        # threads will observe the reserved slot.
+        with _last_request_lock:
+            elapsed = time.monotonic() - _last_request_time
+            if elapsed < 1.0:
+                time.sleep(1.0 - elapsed)
+            _last_request_time = time.monotonic()
 
         for attempt in range(2):
             try:

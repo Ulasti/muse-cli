@@ -212,14 +212,20 @@ def _squarify_thumbnail(audio_path: str, artist_dir: str, audio_format: str):
     except ImportError:
         return  # Pillow not installed, skip silently
 
-    # Find thumbnail file written by yt-dlp
+    # Find thumbnail file written by yt-dlp that matches this audio file's basename
     thumb_path = None
-    for ext in ('*.webp', '*.jpg', '*.jpeg', '*.png'):
-        matches = glob_mod.glob(os.path.join(artist_dir, ext))
-        if matches:
-            # Pick the most recently created one
-            thumb_path = max(matches, key=os.path.getctime)
-            break
+    audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
+    exts = ['.webp', '.jpg', '.jpeg', '.png']
+    candidates = []
+    for ext in exts:
+        # exact basename match (e.g. basename.jpg)
+        candidates.extend(glob_mod.glob(os.path.join(artist_dir, f"{audio_basename}{ext}")))
+        # prefixed variants (e.g. basename_1280x720.jpg or basename_extra.jpg)
+        candidates.extend(glob_mod.glob(os.path.join(artist_dir, f"{audio_basename}_*{ext}")))
+
+    if candidates:
+        # Pick the most recently created one
+        thumb_path = max(candidates, key=os.path.getctime)
 
     if not thumb_path:
         return
